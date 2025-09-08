@@ -3,7 +3,9 @@ package canopen
 import (
     "bytes"
     "encoding/binary"
+    "fmt"
     "testing"
+    "time"
 
     "canbus/canbus"
 )
@@ -115,6 +117,84 @@ func TestSDOClientDownloadUpload(t *testing.T) {
     if err != nil { t.Fatalf("upload: %v", err) }
     if !bytes.Equal(data, stored) {
         t.Fatalf("upload mismatch: %x", data)
+    }
+}
+
+func TestSDOAsyncOverLoopback(t *testing.T) {
+    lb := canbus.NewLoopbackBus()
+    tx := lb.Open()
+    rx := lb.Open()
+    defer tx.Close()
+    defer rx.Close()
+
+    mux := canbus.NewMux(rx)
+    defer mux.Close()
+
+    // Server
+    srv := lb.Open()
+    defer srv.Close()
+    go func() {
+        for {
+            f, err := srv.Receive()
+            if err != nil { return }
+            fc, node, err := ParseCOBID(f.ID)
+            if err != nil || fc != FC_SDO_RX || node != 0x11 { continue }
+            switch f.Data[0] >> 5 {
+            case 1: // download
+                var rsp canbus.Frame
+                rsp.ID = COBID(FC_SDO_TX, node)
+                rsp.Len = 8
+                rsp.Data[0] = byte(3 << 5)
+                rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
+                _ = srv.Send(rsp)
+            case 2: // upload
+                var rsp canbus.Frame
+                rsp.ID = COBID(FC_SDO_TX, node)
+                rsp.Len = 8
+                rsp.Data[0] = byte(2<<5) | (1<<3) | (1<<2) | 0x01
+                rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
+                rsp.Data[4], rsp.Data[5], rsp.Data[6] = 0xDE, 0xAD, 0xBE
+                _ = srv.Send(rsp)
+            }
+        }
+    }()
+
+    client := &SDOAsyncClient{Bus: tx, Mux: mux, Node: 0x11}
+
+    // Issue download and ensure it completes
+    done, err := client.DownloadAsync(0x2000, 0x01)
+    if err != nil {
+        t.Fatal(err)
+    }
+    if e := <-done; e != nil {
+        t.Fatalf("download async error: %v", e)
+    }
+
+    // Concurrently subscribe to all frames to ensure we still receive others
+    all, cancelAll := mux.Subscribe(nil, 8)
+    defer cancelAll()
+
+    // Issue upload and ensure data is received and not blocked
+    dataCh, errCh, err := client.UploadAsync(0x2000, 0x01, time.Second)
+    if err != nil {
+        t.Fatal(err)
+    }
+    select {
+    case data := <-dataCh:
+        if got := fmt.Sprintf("% X", data); got != "DE AD BE" {
+            t.Fatalf("unexpected data: %s", got)
+        }
+    case e := <-errCh:
+        t.Fatalf("upload async error: %v", e)
+    case <-time.After(2 * time.Second):
+        t.Fatal("timeout waiting for async upload")
+    }
+
+    // Ensure that the general subscriber saw at least one frame, demonstrating fan-out
+    select {
+    case <-all:
+    case <-time.After(500 * time.Millisecond):
+        t.Fatal("mux did not fan out frames to general subscriber")
     }
 }
 
