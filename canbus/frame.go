@@ -4,6 +4,7 @@ import (
     "encoding/binary"
     "errors"
     "fmt"
+    "strings"
 )
 
 // Frame represents a classical CAN (2.0A/2.0B) frame.
@@ -121,5 +122,33 @@ func (f *Frame) UnmarshalBinary(data []byte) error {
     f.Len = uint8(data[4])
     copy(f.Data[:], data[8:16])
     return f.Validate()
+}
+
+// String returns a human-friendly representation similar to candump formatting.
+// Examples:
+//   123 [2] DE AD
+//   1ABCDEFF [0]
+//   123 [4] RTR
+func (f Frame) String() string {
+    width := 3
+    if f.Extended {
+        width = 8
+    }
+    var b strings.Builder
+    fmt.Fprintf(&b, "%0*X [%d]", width, f.ID, f.Len)
+    if f.RTR {
+        b.WriteString(" RTR")
+        return b.String()
+    }
+    if f.Len > 0 {
+        b.WriteByte(' ')
+        for i := 0; i < int(f.Len); i++ {
+            if i > 0 {
+                b.WriteByte(' ')
+            }
+            fmt.Fprintf(&b, "%02X", f.Data[i])
+        }
+    }
+    return b.String()
 }
 

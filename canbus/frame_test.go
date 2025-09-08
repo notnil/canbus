@@ -43,6 +43,9 @@ func TestExtendedAndRTR(t *testing.T) {
     if g.ID != f.ID || !g.Extended || !g.RTR {
         t.Fatalf("flags lost: got %+v", g)
     }
+    if got := g.String(); got != "1ABCDEFF [0] RTR" {
+        t.Fatalf("string mismatch: %q", got)
+    }
 }
 
 func TestLoopbackBus(t *testing.T) {
@@ -66,6 +69,9 @@ func TestLoopbackBus(t *testing.T) {
     }
     if err := <-done; err != nil {
         t.Fatalf("send: %v", err)
+    }
+    if got.String() != "321 [5] 68 65 6C 6C 6F" {
+        t.Fatalf("string: got %q", got.String())
     }
 }
 
