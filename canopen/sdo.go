@@ -1,0 +1,203 @@
+package canopen
+
+import (
+    "encoding/binary"
+    "fmt"
+
+    "canbus/canbus"
+)
+
+// SDO command specifiers for initiate download/upload expedited
+const (
+    sdoCCSDownloadInitiate = 1 // client->server
+    sdoCCSUploadInitiate   = 2 // client->server
+    sdoSCSDownloadInitiate = 3 // server->client
+    sdoSCSUploadInitiate   = 2 // server->client
+)
+
+// (no generic command builder is exposed; helpers below encode per CiA 301)
+
+// SDOExpeditedDownload builds client->server expedited download frame (write).
+// It encodes index/subindex and up to 4 data bytes.
+func SDOExpeditedDownload(target NodeID, index uint16, subindex uint8, data []byte) (canbus.Frame, error) {
+    if err := target.Validate(); err != nil {
+        return canbus.Frame{}, err
+    }
+    if len(data) > 4 {
+        return canbus.Frame{}, fmt.Errorf("canopen: expedited download max 4 bytes, got %d", len(data))
+    }
+    var f canbus.Frame
+    f.ID = COBID(FC_SDO_RX, target)
+    f.Len = 8
+    // Build command byte per spec: CCS=1, expedited=1 if <=4, size indicated=1
+    // n = number of unused bytes in bytes 4..7
+    n := uint8(4 - len(data))
+    // Bits: 7..5 ccs, 4: toggle/rsv=0, 3 e, 2 s, 1..0 n
+    cmd := byte(0)
+    cmd |= byte(sdoCCSDownloadInitiate) << 5
+    cmd |= 1 << 3 // e
+    cmd |= 1 << 2 // s
+    cmd |= (n & 0x3)
+    f.Data[0] = cmd
+    binary.LittleEndian.PutUint16(f.Data[1:3], index)
+    f.Data[3] = subindex
+    // Data fill little-endian into bytes 4..7 for convenience. Application must
+    // interpret endian according to object.
+    for i := 0; i < len(data); i++ {
+        f.Data[4+i] = data[i]
+    }
+    return f, nil
+}
+
+// ParseSDOExpeditedDownload decodes an expedited initiate download request.
+func ParseSDOExpeditedDownload(f canbus.Frame) (NodeID, uint16, uint8, []byte, error) {
+    fc, node, err := ParseCOBID(f.ID)
+    if err != nil {
+        return 0, 0, 0, nil, err
+    }
+    if fc != FC_SDO_RX {
+        return 0, 0, 0, nil, fmt.Errorf("canopen: not SDO rx frame (id=0x%X)", f.ID)
+    }
+    if f.Len != 8 {
+        return 0, 0, 0, nil, fmt.Errorf("canopen: SDO frame len %d, want 8", f.Len)
+    }
+    cmd := f.Data[0]
+    if (cmd>>5)&0x7 != sdoCCSDownloadInitiate {
+        return 0, 0, 0, nil, fmt.Errorf("canopen: not initiate download (cmd=0x%02X)", cmd)
+    }
+    expedited := (cmd & (1 << 3)) != 0
+    sizeIndicated := (cmd & (1 << 2)) != 0
+    if !expedited || !sizeIndicated {
+        return 0, 0, 0, nil, fmt.Errorf("canopen: only expedited+size indicated supported (cmd=0x%02X)", cmd)
+    }
+    n := int(cmd & 0x3)
+    if n < 0 || n > 3 {
+        return 0, 0, 0, nil, fmt.Errorf("canopen: invalid n=%d", n)
+    }
+    size := 4 - n
+    idx := binary.LittleEndian.Uint16(f.Data[1:3])
+    sub := f.Data[3]
+    out := make([]byte, size)
+    copy(out, f.Data[4:4+size])
+    return node, idx, sub, out, nil
+}
+
+// SDOExpeditedUploadRequest builds client->server request to read an object.
+func SDOExpeditedUploadRequest(target NodeID, index uint16, subindex uint8) (canbus.Frame, error) {
+    if err := target.Validate(); err != nil {
+        return canbus.Frame{}, err
+    }
+    var f canbus.Frame
+    f.ID = COBID(FC_SDO_RX, target)
+    f.Len = 8
+    cmd := byte(0)
+    cmd |= byte(sdoCCSUploadInitiate) << 5
+    f.Data[0] = cmd
+    binary.LittleEndian.PutUint16(f.Data[1:3], index)
+    f.Data[3] = subindex
+    return f, nil
+}
+
+// ParseSDOExpeditedUploadResponse parses server->client expedited upload response.
+func ParseSDOExpeditedUploadResponse(f canbus.Frame) (NodeID, uint16, uint8, []byte, error) {
+    fc, node, err := ParseCOBID(f.ID)
+    if err != nil {
+        return 0, 0, 0, nil, err
+    }
+    if fc != FC_SDO_TX {
+        return 0, 0, 0, nil, fmt.Errorf("canopen: not SDO tx frame (id=0x%X)", f.ID)
+    }
+    if f.Len != 8 {
+        return 0, 0, 0, nil, fmt.Errorf("canopen: SDO frame len %d, want 8", f.Len)
+    }
+    cmd := f.Data[0]
+    // For upload response, SCS=2 in bits 7..5, e and s set for expedited with size indicated
+    if (cmd>>5)&0x7 != sdoSCSUploadInitiate {
+        return 0, 0, 0, nil, fmt.Errorf("canopen: not upload response (cmd=0x%02X)", cmd)
+    }
+    expedited := (cmd & (1 << 3)) != 0
+    sizeIndicated := (cmd & (1 << 2)) != 0
+    if !expedited || !sizeIndicated {
+        return 0, 0, 0, nil, fmt.Errorf("canopen: only expedited+size indicated supported (cmd=0x%02X)", cmd)
+    }
+    n := int(cmd & 0x3)
+    size := 4 - n
+    idx := binary.LittleEndian.Uint16(f.Data[1:3])
+    sub := f.Data[3]
+    out := make([]byte, size)
+    copy(out, f.Data[4:4+size])
+    return node, idx, sub, out, nil
+}
+
+// SDOClient provides a synchronous SDO interface over a canbus.Bus.
+// It is intentionally minimal and blocking; call from dedicated goroutines.
+type SDOClient struct {
+    Bus canbus.Bus
+    Node NodeID
+}
+
+// Download writes up to 4 bytes to index/subindex using expedited transfer.
+func (c *SDOClient) Download(index uint16, subindex uint8, data []byte) error {
+    req, err := SDOExpeditedDownload(c.Node, index, subindex, data)
+    if err != nil {
+        return err
+    }
+    if err := c.Bus.Send(req); err != nil {
+        return err
+    }
+    // Expect a server response on SDO_TX with SCS=3 (download response)
+    for {
+        f, err := c.Bus.Receive()
+        if err != nil {
+            return err
+        }
+        fc, node, perr := ParseCOBID(f.ID)
+        if perr != nil {
+            continue
+        }
+        if fc != FC_SDO_TX || node != c.Node || f.Len != 8 {
+            continue
+        }
+        cmd := f.Data[0]
+        if (cmd>>5)&0x7 != sdoSCSDownloadInitiate {
+            continue
+        }
+        idx := binary.LittleEndian.Uint16(f.Data[1:3])
+        sub := f.Data[3]
+        if idx == index && sub == subindex {
+            return nil
+        }
+    }
+}
+
+// Upload reads up to 4 bytes via expedited transfer.
+func (c *SDOClient) Upload(index uint16, subindex uint8) ([]byte, error) {
+    req, err := SDOExpeditedUploadRequest(c.Node, index, subindex)
+    if err != nil {
+        return nil, err
+    }
+    if err := c.Bus.Send(req); err != nil {
+        return nil, err
+    }
+    for {
+        f, err := c.Bus.Receive()
+        if err != nil {
+            return nil, err
+        }
+        fc, node, perr := ParseCOBID(f.ID)
+        if perr != nil {
+            continue
+        }
+        if fc != FC_SDO_TX || node != c.Node || f.Len != 8 {
+            continue
+        }
+        _, idx, sub, data, perr := ParseSDOExpeditedUploadResponse(f)
+        if perr != nil {
+            continue
+        }
+        if idx == index && sub == subindex {
+            return data, nil
+        }
+    }
+}
+
