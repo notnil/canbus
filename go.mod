@@ -1,4 +1,3 @@
-module canbus
+module github.com/notnil/canbus
 
 go 1.22
-

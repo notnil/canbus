@@ -1,21 +1,38 @@
 canbus
 =====
 
-An idiomatic, dependency-free (standard library only) Go package for working with Controller Area Network (CAN) buses.
+An idiomatic, dependency-free Go library for working with Controller Area Network (CAN) buses. The top-level module provides core CAN types and I/O, and the `canopen` subpackage offers small, composable helpers for common CANopen tasks.
+
+- **Module import**: `github.com/notnil/canbus`
+- **CANopen helpers**: `github.com/notnil/canbus/canopen`
+
+What is CAN?
+- **CAN (Controller Area Network)** is a robust, real-time field bus used in automotive, robotics, and industrial control.
+- **Frames** carry up to 8 data bytes (classical CAN) with 11-bit or 29-bit identifiers.
+- **Broadcast medium**: every node can see all frames; filtering happens at the node.
+
+What is CANopen?
+- **CANopen** is a higher-level protocol stack (CiA 301) standardized on top of CAN.
+- It defines services such as **NMT** (network management), **Heartbeat** (node status), **EMCY** (emergency), and **SDO/PDO** for configuration and process data.
+- This library implements a practical subset focused on building blocks you can integrate into your own nodes; it is not a full CANopen stack or object dictionary implementation.
 
 Features
-- Core CAN frame type with validation and binary marshaling helpers
+- Core CAN `Frame` type with validation and binary marshaling helpers
 - In-memory loopback bus for testing and simulation
 - Optional Linux SocketCAN driver (linux-only) implemented via raw syscalls
 - Zero external dependencies beyond the Go standard library
-
-- CANopen helpers (new)
+- CANopen helpers:
   - COB-ID helpers and function code mapping
   - NMT build/parse utilities
   - Heartbeat (NMT error control) build/parse
   - EMCY encode/decode
   - SDO expedited helpers and a minimal synchronous SDO client
   - Async SDO client with frame multiplexer that doesn't block other reads
+
+Install
+```bash
+go get github.com/notnil/canbus
+```
 
 Quick start
 ```go
@@ -24,7 +41,7 @@ package main
 import (
     "fmt"
 
-    "canbus"
+    "github.com/notnil/canbus"
 )
 
 func main() {
@@ -55,7 +72,7 @@ import (
     "log"
     "time"
 
-    "canbus"
+    "github.com/notnil/canbus"
 )
 
 func main() {
@@ -94,8 +111,8 @@ import (
     "fmt"
     "log"
 
-    "canbus"
-    "canbus/canopen"
+    "github.com/notnil/canbus"
+    "github.com/notnil/canbus/canopen"
 )
 
 func main() {
@@ -159,8 +176,8 @@ import (
     "fmt"
     "time"
 
-    "canbus"
-    "canbus/canopen"
+    "github.com/notnil/canbus"
+    "github.com/notnil/canbus/canopen"
 )
 
 func main() {
@@ -223,6 +240,3 @@ func main() {
 
 License
 MIT
-
-# canbus
-A lightweight Golang library for working with CAN bus — send, receive, and parse CAN frames with ease.
