@@ -107,7 +107,7 @@ func (c *SDOAsyncClient) UploadAsync(index uint16, subindex uint8, timeout time.
                     close(dataCh)
                     return
                 }
-                _, idx, sub, data, perr := ParseSDOExpeditedUploadResponse(f)
+                _, idx, sub, data, perr := parseSDOExpeditedUploadResponse(f)
                 if perr != nil || idx != index || sub != subindex {
                     continue
                 }

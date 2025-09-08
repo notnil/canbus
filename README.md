@@ -154,7 +154,7 @@ func main() {
     }()
 
     // Client side: perform expedited SDO download then upload
-    c := &canopen.SDOClient{Bus: client, Node: 0x22}
+    c := canopen.NewSDOClient(client, 0x22, nil, 0)
     if err := c.Download(0x2000, 0x01, []byte{0xAA, 0xBB}); err != nil {
         log.Fatal(err)
     }
@@ -191,7 +191,7 @@ func main() {
     mux := canbus.NewMux(rx)
     defer mux.Close()
 
-    client := canopen.SDOAsyncClient{Bus: tx, Mux: mux, Node: 0x22}
+    client := canopen.NewSDOClient(tx, 0x22, mux, 2*time.Second)
 
     // Simulated server
     srv := lb.Open()
@@ -222,19 +222,12 @@ func main() {
     }()
 
     // Download without blocking other receivers
-    done, err := client.DownloadAsync(0x2000, 0x01)
-    if err != nil { panic(err) }
-    if e := <-done; e != nil { panic(e) }
+    if err := client.Download(0x2000, 0x01, []byte{0xAA}); err != nil { panic(err) }
 
     // Upload with timeout
-    dataCh, errCh, err := client.UploadAsync(0x2000, 0x01, 2*time.Second)
+    data, err := client.Upload(0x2000, 0x01)
     if err != nil { panic(err) }
-    select {
-    case data := <-dataCh:
-        fmt.Printf("SDO read: % X\n", data)
-    case e := <-errCh:
-        panic(e)
-    }
+    fmt.Printf("SDO read: % X\n", data)
 }
 ```
 
