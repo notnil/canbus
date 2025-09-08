@@ -4,7 +4,7 @@ import (
     "encoding/binary"
     "fmt"
 
-    "canbus/canbus"
+    "github.com/notnil/canbus"
 )
 
 // Emergency represents an EMCY message payload.

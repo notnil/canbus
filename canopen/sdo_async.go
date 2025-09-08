@@ -4,7 +4,7 @@ import (
     "encoding/binary"
     "time"
 
-    "canbus/canbus"
+    "github.com/notnil/canbus"
 )
 
 // SDOAsyncClient provides non-blocking SDO operations by subscribing to a

@@ -3,7 +3,7 @@ package canopen
 import (
     "fmt"
 
-    "canbus/canbus"
+    "github.com/notnil/canbus"
 )
 
 // BuildHeartbeat produces an NMT error control heartbeat frame for node/state.

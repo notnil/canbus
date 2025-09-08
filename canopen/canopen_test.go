@@ -7,7 +7,7 @@ import (
     "testing"
     "time"
 
-    "canbus/canbus"
+    "github.com/notnil/canbus"
 )
 
 func TestCOBIDHelpers(t *testing.T) {
