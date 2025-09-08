@@ -51,7 +51,7 @@ func TestSDOExpeditedHelpers(t *testing.T) {
     data := []byte{0xDE, 0xAD, 0xBE, 0xEF}
     f, err := SDOExpeditedDownload(0x23, 0x2000, 0x01, data)
     if err != nil { t.Fatal(err) }
-    node, idx, sub, got, err := ParseSDOExpeditedDownload(f)
+    node, idx, sub, got, err := parseSDOExpeditedDownload(f)
     if err != nil { t.Fatal(err) }
     if node != 0x23 || idx != 0x2000 || sub != 0x01 || !bytes.Equal(got, data) {
         t.Fatalf("sdo parse mismatch: node=%d idx=0x%X sub=%d data=%x", node, idx, sub, got)
@@ -108,7 +108,7 @@ func TestSDOClientDownloadUpload(t *testing.T) {
         }
     }()
 
-    c := &SDOClient{Bus: clientEp, Node: 0x22}
+    c := NewSDOClient(clientEp, 0x22, nil, 0)
     if err := c.Download(0x2000, 0x01, []byte{0xAA, 0xBB}); err != nil {
         t.Fatalf("download: %v", err)
     }
@@ -159,36 +159,19 @@ func TestSDOAsyncOverLoopback(t *testing.T) {
         }
     }()
 
-    client := &SDOAsyncClient{Bus: tx, Mux: mux, Node: 0x11}
+    client := NewSDOClient(tx, 0x11, mux, time.Second)
 
     // Issue download and ensure it completes
-    done, err := client.DownloadAsync(0x2000, 0x01)
-    if err != nil {
-        t.Fatal(err)
-    }
-    if e := <-done; e != nil {
-        t.Fatalf("download async error: %v", e)
-    }
+    if err := client.Download(0x2000, 0x01, []byte{0x01}); err != nil { t.Fatal(err) }
 
     // Concurrently subscribe to all frames to ensure we still receive others
     all, cancelAll := mux.Subscribe(nil, 8)
     defer cancelAll()
 
     // Issue upload and ensure data is received and not blocked
-    dataCh, errCh, err := client.UploadAsync(0x2000, 0x01, time.Second)
-    if err != nil {
-        t.Fatal(err)
-    }
-    select {
-    case data := <-dataCh:
-        if got := fmt.Sprintf("% X", data); got != "DE AD BE" {
-            t.Fatalf("unexpected data: %s", got)
-        }
-    case e := <-errCh:
-        t.Fatalf("upload async error: %v", e)
-    case <-time.After(2 * time.Second):
-        t.Fatal("timeout waiting for async upload")
-    }
+    data, err := client.Upload(0x2000, 0x01)
+    if err != nil { t.Fatal(err) }
+    if got := fmt.Sprintf("% X", data); got != "DE AD BE" { t.Fatalf("unexpected data: %s", got) }
 
     // Ensure that the general subscriber saw at least one frame, demonstrating fan-out
     select {
