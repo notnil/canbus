@@ -2,9 +2,7 @@ package canbus
 
 import (
     "bytes"
-    "context"
     "testing"
-    "time"
 )
 
 func TestFrameValidateAndBinary(t *testing.T) {
@@ -54,15 +52,12 @@ func TestLoopbackBus(t *testing.T) {
     defer a.Close()
     defer b.Close()
 
-    ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-    defer cancel()
-
     send := MustFrame(0x321, []byte("hello"))
 
     done := make(chan error, 1)
-    go func() { done <- a.Send(ctx, send) }()
+    go func() { done <- a.Send(send) }()
 
-    got, err := b.Receive(ctx)
+    got, err := b.Receive()
     if err != nil {
         t.Fatalf("receive: %v", err)
     }

@@ -14,9 +14,7 @@ Quick start
 package main
 
 import (
-    "context"
     "fmt"
-    "time"
 
     "canbus"
 )
@@ -28,12 +26,9 @@ func main() {
     defer a.Close()
     defer b.Close()
 
-    ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-    defer cancel()
+    go func() { _ = a.Send(canbus.MustFrame(0x123, []byte("hi"))) }()
 
-    go func() { _ = a.Send(ctx, canbus.MustFrame(0x123, []byte("hi"))) }()
-
-    f, err := b.Receive(ctx)
+    f, err := b.Receive()
     if err != nil { panic(err) }
     fmt.Printf("ID=%03X LEN=%d DATA=%x\n", f.ID, f.Len, f.Data[:f.Len])
 }
@@ -42,6 +37,41 @@ func main() {
 Linux SocketCAN
 - Build tag: enabled automatically on linux. The `socketcan_linux.go` driver uses only `syscall` and raw syscalls.
 - Open a socket with an interface name (e.g., `can0`) using `canbus.DialSocketCAN("can0")`.
+
+Example (Linux SocketCAN)
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "time"
+
+    "canbus"
+)
+
+func main() {
+    bus, err := canbus.DialSocketCAN("can0")
+    if err != nil { log.Fatal(err) }
+    defer bus.Close()
+
+    // Send a frame
+    if err := bus.Send(canbus.MustFrame(0x123, []byte{0xDE, 0xAD, 0xBE, 0xEF})); err != nil {
+        log.Fatal(err)
+    }
+
+    // Receive a frame (blocks)
+    go func() {
+        for {
+            f, err := bus.Receive()
+            if err != nil { log.Fatal(err) }
+            fmt.Printf("< %03X [%d] % x\n", f.ID, f.Len, f.Data[:f.Len])
+        }
+    }()
+
+    time.Sleep(2 * time.Second)
+}
+```
 
 License
 MIT

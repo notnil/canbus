@@ -1,7 +1,6 @@
 package canbus
 
 import (
-    "context"
     "sync"
 )
 
@@ -61,7 +60,7 @@ type loopEndpoint struct {
 }
 
 // Send broadcasts the frame to all other endpoints on the same bus.
-func (e *loopEndpoint) Send(ctx context.Context, frame Frame) error {
+func (e *loopEndpoint) Send(frame Frame) error {
     if err := frame.Validate(); err != nil {
         return err
     }
@@ -85,32 +84,23 @@ func (e *loopEndpoint) Send(ctx context.Context, frame Frame) error {
     }
     e.bus.mu.RUnlock()
 
-    // Deliver to targets honoring context cancellation.
+    // Deliver to targets.
     for _, t := range targets {
         select {
         case t.ch <- frame:
         case <-t.closed:
-            // drop
-        case <-ctx.Done():
-            return ctx.Err()
         }
     }
     return nil
 }
 
 // Receive waits for the next frame.
-func (e *loopEndpoint) Receive(ctx context.Context) (Frame, error) {
-    select {
-    case f, ok := <-e.ch:
-        if !ok {
-            return Frame{}, ErrClosed
-        }
-        return f, nil
-    case <-e.closed:
+func (e *loopEndpoint) Receive() (Frame, error) {
+    f, ok := <-e.ch
+    if !ok {
         return Frame{}, ErrClosed
-    case <-ctx.Done():
-        return Frame{}, ctx.Err()
     }
+    return f, nil
 }
 
 // Close detaches endpoint from bus and closes its channel.

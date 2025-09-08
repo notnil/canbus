@@ -1,9 +1,7 @@
 package canbus
 
 import (
-    "context"
     "fmt"
-    "time"
 )
 
 func ExampleLoopbackBus() {
@@ -13,11 +11,8 @@ func ExampleLoopbackBus() {
     defer a.Close()
     defer b.Close()
 
-    ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-    defer cancel()
-
-    go func() { _ = a.Send(ctx, MustFrame(0x123, []byte("hi"))) }()
-    f, _ := b.Receive(ctx)
+    go func() { _ = a.Send(MustFrame(0x123, []byte("hi"))) }()
+    f, _ := b.Receive()
     fmt.Printf("ID=%03X LEN=%d DATA=%x\n", f.ID, f.Len, f.Data[:f.Len])
     // Output: ID=123 LEN=2 DATA=6869
 }

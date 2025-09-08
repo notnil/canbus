@@ -1,7 +1,6 @@
 package canbus
 
 import (
-    "context"
     "errors"
 )
 
@@ -9,12 +8,11 @@ import (
 // Implementations should be safe for concurrent use by multiple goroutines.
 type Bus interface {
     // Send transmits a frame. It may block until the frame is queued or sent.
-    // Context cancellation should abort the operation and return the context error.
-    Send(ctx context.Context, frame Frame) error
+    Send(frame Frame) error
 
-    // Receive retrieves the next available frame. It should block until a frame
-    // is available or the context is cancelled.
-    Receive(ctx context.Context) (Frame, error)
+    // Receive retrieves the next available frame. It blocks until a frame
+    // is available or the bus/endpoint is closed.
+    Receive() (Frame, error)
 
     // Close releases resources. Further Send/Receive may return an error.
     Close() error
