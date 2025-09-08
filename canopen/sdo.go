@@ -3,6 +3,7 @@ package canopen
 import (
     "encoding/binary"
     "fmt"
+    "time"
 
     "github.com/notnil/canbus"
 )
@@ -129,11 +130,19 @@ func ParseSDOExpeditedUploadResponse(f canbus.Frame) (NodeID, uint16, uint8, []b
     return node, idx, sub, out, nil
 }
 
-// SDOClient provides a synchronous SDO interface over a canbus.Bus.
-// It is intentionally minimal and blocking; call from dedicated goroutines.
+// SDOClient provides a synchronous-looking SDO interface.
+//
+// If Mux is set, it waits for responses via the multiplexer so other consumers
+// of Receive are not blocked. If Mux is nil, it falls back to directly reading
+// from Bus.Receive (legacy behavior).
+//
+// Timeout is optional and only applies when using Mux. A zero timeout waits
+// indefinitely for the matching response.
 type SDOClient struct {
-    Bus canbus.Bus
-    Node NodeID
+    Bus     canbus.Bus
+    Mux     *canbus.Mux
+    Node    NodeID
+    Timeout time.Duration
 }
 
 // Download writes up to 4 bytes to index/subindex using expedited transfer.
@@ -142,10 +151,46 @@ func (c *SDOClient) Download(index uint16, subindex uint8, data []byte) error {
     if err != nil {
         return err
     }
+
+    // Fast path using mux if available.
+    if c.Mux != nil {
+        ch, cancel := c.Mux.Subscribe(func(f canbus.Frame) bool {
+            fc, node, err := ParseCOBID(f.ID)
+            if err != nil || fc != FC_SDO_TX || node != c.Node || f.Len != 8 {
+                return false
+            }
+            if (f.Data[0]>>5)&0x7 != sdoSCSDownloadInitiate {
+                return false
+            }
+            idx := binary.LittleEndian.Uint16(f.Data[1:3])
+            sub := f.Data[3]
+            return idx == index && sub == subindex
+        }, 1)
+        defer cancel()
+
+        if err := c.Bus.Send(req); err != nil {
+            return err
+        }
+
+        if c.Timeout > 0 {
+            select {
+            case _, ok := <-ch:
+                if !ok { return canbus.ErrClosed }
+                return nil
+            case <-time.After(c.Timeout):
+                return canbus.ErrClosed
+            }
+        }
+        if _, ok := <-ch; !ok {
+            return canbus.ErrClosed
+        }
+        return nil
+    }
+
+    // Legacy fallback: block on Bus.Receive.
     if err := c.Bus.Send(req); err != nil {
         return err
     }
-    // Expect a server response on SDO_TX with SCS=3 (download response)
     for {
         f, err := c.Bus.Receive()
         if err != nil {
@@ -176,6 +221,46 @@ func (c *SDOClient) Upload(index uint16, subindex uint8) ([]byte, error) {
     if err != nil {
         return nil, err
     }
+
+    if c.Mux != nil {
+        ch, cancel := c.Mux.Subscribe(func(f canbus.Frame) bool {
+            fc, node, err := ParseCOBID(f.ID)
+            if err != nil || fc != FC_SDO_TX || node != c.Node || f.Len != 8 {
+                return false
+            }
+            // Further filtering happens after parse to check index/subindex
+            return true
+        }, 2)
+        defer cancel()
+
+        if err := c.Bus.Send(req); err != nil {
+            return nil, err
+        }
+
+        if c.Timeout > 0 {
+            timeout := time.After(c.Timeout)
+            for {
+                select {
+                case f, ok := <-ch:
+                    if !ok { return nil, canbus.ErrClosed }
+                    _, idx, sub, data, perr := ParseSDOExpeditedUploadResponse(f)
+                    if perr != nil || idx != index || sub != subindex { continue }
+                    return data, nil
+                case <-timeout:
+                    return nil, canbus.ErrClosed
+                }
+            }
+        }
+        for {
+            f, ok := <-ch
+            if !ok { return nil, canbus.ErrClosed }
+            _, idx, sub, data, perr := ParseSDOExpeditedUploadResponse(f)
+            if perr != nil || idx != index || sub != subindex { continue }
+            return data, nil
+        }
+    }
+
+    // Legacy fallback: block on Bus.Receive.
     if err := c.Bus.Send(req); err != nil {
         return nil, err
     }
@@ -199,5 +284,44 @@ func (c *SDOClient) Upload(index uint16, subindex uint8) ([]byte, error) {
             return data, nil
         }
     }
+}
+
+// Typed marshal/unmarshal helpers for common expedited cases (<=4 bytes)
+
+func (c *SDOClient) WriteU8(index uint16, subindex uint8, value uint8) error {
+    return c.Download(index, subindex, []byte{value})
+}
+
+func (c *SDOClient) WriteU16(index uint16, subindex uint8, value uint16) error {
+    var b [2]byte
+    binary.LittleEndian.PutUint16(b[:], value)
+    return c.Download(index, subindex, b[:])
+}
+
+func (c *SDOClient) WriteU32(index uint16, subindex uint8, value uint32) error {
+    var b [4]byte
+    binary.LittleEndian.PutUint32(b[:], value)
+    return c.Download(index, subindex, b[:])
+}
+
+func (c *SDOClient) ReadU8(index uint16, subindex uint8) (uint8, error) {
+    b, err := c.Upload(index, subindex)
+    if err != nil { return 0, err }
+    if len(b) < 1 { return 0, fmt.Errorf("canopen: sdo read u8: empty") }
+    return b[0], nil
+}
+
+func (c *SDOClient) ReadU16(index uint16, subindex uint8) (uint16, error) {
+    b, err := c.Upload(index, subindex)
+    if err != nil { return 0, err }
+    if len(b) != 2 { return 0, fmt.Errorf("canopen: sdo read u16: got %d bytes", len(b)) }
+    return binary.LittleEndian.Uint16(b), nil
+}
+
+func (c *SDOClient) ReadU32(index uint16, subindex uint8) (uint32, error) {
+    b, err := c.Upload(index, subindex)
+    if err != nil { return 0, err }
+    if len(b) != 4 { return 0, fmt.Errorf("canopen: sdo read u32: got %d bytes", len(b)) }
+    return binary.LittleEndian.Uint32(b), nil
 }
 
