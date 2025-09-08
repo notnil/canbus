@@ -15,6 +15,7 @@ Features
   - Heartbeat (NMT error control) build/parse
   - EMCY encode/decode
   - SDO expedited helpers and a minimal synchronous SDO client
+  - Async SDO client with frame multiplexer that doesn't block other reads
 
 Quick start
 ```go
@@ -143,6 +144,80 @@ func main() {
     data, err := c.Upload(0x2000, 0x01)
     if err != nil { log.Fatal(err) }
     fmt.Printf("SDO read: % X\n", data) // prints: SDO read: DE AD BE
+}
+```
+
+Async SDO (non-blocking reads)
+------------------------------
+
+Use the `canbus.Mux` to fan-out frames to subscribers and the `canopen.SDOAsyncClient` to issue SDO requests without monopolizing `Receive()`.
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+
+    "canbus"
+    "canbus/canopen"
+)
+
+func main() {
+    lb := canbus.NewLoopbackBus()
+    // Open two endpoints: one for sending, one for receiving/muxing
+    tx := lb.Open()
+    rx := lb.Open()
+    defer tx.Close()
+    defer rx.Close()
+
+    mux := canbus.NewMux(rx)
+    defer mux.Close()
+
+    client := canopen.SDOAsyncClient{Bus: tx, Mux: mux, Node: 0x22}
+
+    // Simulated server
+    srv := lb.Open()
+    defer srv.Close()
+    go func() {
+        for {
+            f, err := srv.Receive(); if err != nil { return }
+            fc, node, _ := canopen.ParseCOBID(f.ID)
+            if fc != canopen.FC_SDO_RX || node != 0x22 { continue }
+            switch f.Data[0] >> 5 {
+            case 1: // download
+                var rsp canbus.Frame
+                rsp.ID = canopen.COBID(canopen.FC_SDO_TX, node)
+                rsp.Len = 8
+                rsp.Data[0] = byte(3 << 5)
+                rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
+                _ = srv.Send(rsp)
+            case 2: // upload
+                var rsp canbus.Frame
+                rsp.ID = canopen.COBID(canopen.FC_SDO_TX, node)
+                rsp.Len = 8
+                rsp.Data[0] = byte(2<<5) | (1<<3) | (1<<2) | 0x01 // expedited 3 bytes
+                rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
+                rsp.Data[4], rsp.Data[5], rsp.Data[6] = 0xDE, 0xAD, 0xBE
+                _ = srv.Send(rsp)
+            }
+        }
+    }()
+
+    // Download without blocking other receivers
+    done, err := client.DownloadAsync(0x2000, 0x01)
+    if err != nil { panic(err) }
+    if e := <-done; e != nil { panic(e) }
+
+    // Upload with timeout
+    dataCh, errCh, err := client.UploadAsync(0x2000, 0x01, 2*time.Second)
+    if err != nil { panic(err) }
+    select {
+    case data := <-dataCh:
+        fmt.Printf("SDO read: % X\n", data)
+    case e := <-errCh:
+        panic(e)
+    }
 }
 ```
 
