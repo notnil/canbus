@@ -4,7 +4,7 @@ import (
     "encoding/binary"
     "fmt"
 
-    "canbus/canbus"
+    "github.com/notnil/canbus"
 )
 
 // SDO command specifiers for initiate download/upload expedited

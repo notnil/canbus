@@ -3,7 +3,7 @@ package canopen
 import (
     "fmt"
 
-    "canbus/canbus"
+    "github.com/notnil/canbus"
 )
 
 // NMTCommand is the command specifier for NMT service.
