@@ -27,11 +27,11 @@ type EmergencyFrame struct {
 }
 
 func (e EmergencyFrame) MarshalCANFrame() (canbus.Frame, error) {
-    return BuildEMCY(e.Node, e.Payload)
+    return buildEMCY(e.Node, e.Payload)
 }
 
 func (e *EmergencyFrame) UnmarshalCANFrame(f canbus.Frame) error {
-    node, payload, err := ParseEMCY(f)
+    node, payload, err := parseEMCY(f)
     if err != nil {
         return err
     }
@@ -47,11 +47,11 @@ type HeartbeatFrame struct {
 }
 
 func (h HeartbeatFrame) MarshalCANFrame() (canbus.Frame, error) {
-    return BuildHeartbeat(h.Node, h.State)
+    return buildHeartbeat(h.Node, h.State)
 }
 
 func (h *HeartbeatFrame) UnmarshalCANFrame(f canbus.Frame) error {
-    node, state, err := ParseHeartbeat(f)
+    node, state, err := parseHeartbeat(f)
     if err != nil {
         return err
     }
@@ -69,12 +69,12 @@ type NMTFrame struct {
 
 func (n NMTFrame) MarshalCANFrame() (canbus.Frame, error) {
     // BuildNMT never returns error; keep signature uniform by returning nil error
-    f := BuildNMT(n.Command, n.Node)
+    f := buildNMT(n.Command, n.Node)
     return f, nil
 }
 
 func (n *NMTFrame) UnmarshalCANFrame(f canbus.Frame) error {
-    cmd, node, err := ParseNMT(f)
+    cmd, node, err := parseNMT(f)
     if err != nil {
         return err
     }

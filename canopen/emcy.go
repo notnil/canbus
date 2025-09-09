@@ -19,8 +19,8 @@ type Emergency struct {
     Manufacturer   [5]byte
 }
 
-// BuildEMCY builds an EMCY frame for the given node.
-func BuildEMCY(node NodeID, e Emergency) (canbus.Frame, error) {
+// buildEMCY builds an EMCY frame for the given node.
+func buildEMCY(node NodeID, e Emergency) (canbus.Frame, error) {
     if err := node.Validate(); err != nil {
         return canbus.Frame{}, err
     }
@@ -33,8 +33,8 @@ func BuildEMCY(node NodeID, e Emergency) (canbus.Frame, error) {
     return f, nil
 }
 
-// ParseEMCY decodes an EMCY payload from a CAN frame.
-func ParseEMCY(f canbus.Frame) (NodeID, Emergency, error) {
+// parseEMCY decodes an EMCY payload from a CAN frame.
+func parseEMCY(f canbus.Frame) (NodeID, Emergency, error) {
     if f.Len < 8 {
         return 0, Emergency{}, fmt.Errorf("canopen: emcy too short: %d", f.Len)
     }
