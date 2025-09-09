@@ -299,3 +299,106 @@ func TestSDOAsyncOverLoopback(t *testing.T) {
     }
 }
 
+func TestSYNCMarshalUnmarshal(t *testing.T) {
+    // No counter
+    s := SYNC{}
+    f, err := s.MarshalCANFrame()
+    if err != nil { t.Fatal(err) }
+    if fc, _, err := ParseCOBID(f.ID); err != nil || fc != FC_SYNC || f.Len != 0 {
+        t.Fatalf("sync frame invalid: fc=%v len=%d err=%v", fc, f.Len, err)
+    }
+
+    // With counter
+    c := uint8(42)
+    s = SYNC{Counter: &c}
+    f, err = s.MarshalCANFrame()
+    if err != nil { t.Fatal(err) }
+    var parsed SYNC
+    if err := parsed.UnmarshalCANFrame(f); err != nil { t.Fatal(err) }
+    if parsed.Counter == nil || *parsed.Counter != 42 {
+        t.Fatalf("sync counter mismatch: %+v", parsed.Counter)
+    }
+}
+
+func TestSYNCWriter(t *testing.T) {
+    lb := canbus.NewLoopbackBus()
+    epTx := lb.Open()
+    epRx := lb.Open()
+    defer func() { _ = epTx.Close(); _ = epRx.Close() }()
+
+    w := NewSYNCWriter(epTx, 10*time.Millisecond, true)
+    w.Start()
+    defer w.Stop()
+
+    // Collect a few frames and verify id/len and monotonic counter modulo 128
+    var last *uint8
+    got := 0
+    deadline := time.After(200 * time.Millisecond)
+    for got < 3 {
+        select {
+        case <-deadline:
+            t.Fatalf("timeout waiting for sync frames; got=%d", got)
+        default:
+        }
+        f, err := epRx.Receive()
+        if err != nil { t.Fatal(err) }
+        fc, _, err := ParseCOBID(f.ID)
+        if err != nil || fc != FC_SYNC { continue }
+        if f.Len != 1 { t.Fatalf("expected len 1, got %d", f.Len) }
+        v := f.Data[0] & 0x7F
+        if last != nil {
+            expected := (*last + 1) & 0x7F
+            if v != expected { t.Fatalf("counter not incrementing: got=%d want=%d", v, expected) }
+        }
+        last = new(uint8)
+        *last = v
+        got++
+    }
+}
+
+func TestSDOAbortDownloadAndUpload(t *testing.T) {
+    lb := canbus.NewLoopbackBus()
+    client := lb.Open()
+    server := lb.Open()
+    defer func() { _ = client.Close(); _ = server.Close() }()
+
+    // Server immediately aborts any SDO request to node 0x55 with code 0x06010002 (write read-only)
+    go func() {
+        for {
+            f, err := server.Receive()
+            if err != nil { return }
+            fc, node, err := ParseCOBID(f.ID)
+            if err != nil || fc != FC_SDO_RX || node != 0x55 { continue }
+            var rsp canbus.Frame
+            rsp.ID = COBID(FC_SDO_TX, node)
+            rsp.Len = 8
+            rsp.Data[0] = byte(sdoSCSAbort << 5)
+            rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
+            // abort code 0x06010002
+            rsp.Data[4] = 0x02
+            rsp.Data[5] = 0x00
+            rsp.Data[6] = 0x01
+            rsp.Data[7] = 0x06
+            _ = server.Send(rsp)
+        }
+    }()
+
+    mux := canbus.NewMux(client)
+    defer mux.Close()
+    c := NewSDOClient(client, 0x55, mux, time.Second)
+
+    // Download should return SDOAbort
+    if err := c.Download(0x2000, 0x01, []byte{0xAA}); err == nil {
+        t.Fatal("expected abort on download")
+    } else if ab, ok := err.(SDOAbort); !ok || ab.Code != 0x06010002 || ab.Index != 0x2000 || ab.Subindex != 0x01 {
+        t.Fatalf("unexpected abort error: %v", err)
+    }
+
+    // Upload should also return SDOAbort
+    if _, err := c.Upload(0x2000, 0x01); err == nil {
+        t.Fatal("expected abort on upload")
+    } else if ab, ok := err.(SDOAbort); !ok || ab.Code != 0x06010002 || ab.Index != 0x2000 || ab.Subindex != 0x01 {
+        t.Fatalf("unexpected abort error: %v", err)
+    }
+}
+
