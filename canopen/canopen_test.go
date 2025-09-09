@@ -49,7 +49,7 @@ func TestEMCY(t *testing.T) {
 
 func TestSDOExpeditedHelpers(t *testing.T) {
     data := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-    f, err := SDOExpeditedDownload(0x23, 0x2000, 0x01, data)
+    f, err := sdoExpeditedDownload(0x23, 0x2000, 0x01, data)
     if err != nil { t.Fatal(err) }
     node, idx, sub, got, err := parseSDOExpeditedDownload(f)
     if err != nil { t.Fatal(err) }
@@ -57,7 +57,7 @@ func TestSDOExpeditedHelpers(t *testing.T) {
         t.Fatalf("sdo parse mismatch: node=%d idx=0x%X sub=%d data=%x", node, idx, sub, got)
     }
 
-    req, err := SDOExpeditedUploadRequest(0x23, 0x1018, 0x00)
+    req, err := sdoExpeditedUploadRequest(0x23, 0x1018, 0x00)
     if err != nil { t.Fatal(err) }
     if fc, node, err := ParseCOBID(req.ID); err != nil || fc != FC_SDO_RX || node != 0x23 {
         t.Fatalf("upload req cobid: fc=%v node=%d err=%v", fc, node, err)
@@ -119,6 +119,119 @@ func TestSDOClientDownloadUpload(t *testing.T) {
     if err != nil { t.Fatalf("upload: %v", err) }
     if !bytes.Equal(data, stored) {
         t.Fatalf("upload mismatch: %x", data)
+    }
+}
+
+func TestSDOSegmentedDownloadUpload(t *testing.T) {
+    bus := canbus.NewLoopbackBus()
+    clientEp := bus.Open()
+    serverEp := bus.Open()
+    defer clientEp.Close()
+    defer serverEp.Close()
+
+    // Test data > 4 bytes to force segmented
+    writeData := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+    readData := []byte{0xCA, 0xFE, 0xBA, 0xBE, 0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD}
+
+    // Minimal segmented server
+    go func() {
+        var stored []byte
+        for {
+            f, err := serverEp.Receive()
+            if err != nil { return }
+            fc, node, err := ParseCOBID(f.ID)
+            if err != nil || fc != FC_SDO_RX || node != 0x33 { continue }
+
+            switch f.Data[0] >> 5 {
+            case sdoCCSDownloadInitiate:
+                // Respond to initiate (segmented)
+                var rsp canbus.Frame
+                rsp.ID = COBID(FC_SDO_TX, node)
+                rsp.Len = 8
+                rsp.Data[0] = byte(sdoSCSDownloadInitiate << 5)
+                rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
+                _ = serverEp.Send(rsp)
+                // Then handle segments until c=1
+                toggle := byte(0)
+                for {
+                    seg, err := serverEp.Receive()
+                    if err != nil { return }
+                    if (seg.Data[0]>>5)&0x7 != sdoCCSDownloadSegment { continue }
+                    t := (seg.Data[0] >> 4) & 0x1
+                    if t != (toggle & 0x1) {
+                        // Ignore unexpected toggles in test
+                    }
+                    cFlag := (seg.Data[0] & 0x1) != 0
+                    n := int((seg.Data[0] >> 1) & 0x7)
+                    end := 8
+                    if cFlag { end = 8 - n }
+                    stored = append(stored, seg.Data[1:end]...)
+                    // Ack
+                    var ack canbus.Frame
+                    ack.ID = COBID(FC_SDO_TX, node)
+                    ack.Len = 8
+                    ack.Data[0] = byte(sdoSCSDownloadSegment<<5)
+                    if t == 1 { ack.Data[0] |= 1 << 4 }
+                    _ = serverEp.Send(ack)
+                    if cFlag { break }
+                    toggle ^= 1
+                }
+            case sdoCCSUploadInitiate:
+                // Reply with segmented initiate, size indicated
+                var rsp canbus.Frame
+                rsp.ID = COBID(FC_SDO_TX, node)
+                rsp.Len = 8
+                rsp.Data[0] = byte(sdoSCSUploadInitiate << 5) | (1 << 2)
+                binary.LittleEndian.PutUint16(rsp.Data[1:3], 0x3000)
+                rsp.Data[3] = 0x02
+                binary.LittleEndian.PutUint32(rsp.Data[4:8], uint32(len(readData)))
+                _ = serverEp.Send(rsp)
+                // Serve segments upon request
+                sent := 0
+                toggle := byte(0)
+                for sent < len(readData) {
+                    req, err := serverEp.Receive()
+                    if err != nil { return }
+                    if (req.Data[0]>>5)&0x7 != sdoCCSUploadSegment { continue }
+                    t := (req.Data[0] >> 4) & 0x1
+                    if t != (toggle & 0x1) {
+                        // ignore
+                    }
+                    remain := len(readData) - sent
+                    segLen := 7
+                    if remain < segLen { segLen = remain }
+                    last := segLen == remain
+                    var seg canbus.Frame
+                    seg.ID = COBID(FC_SDO_TX, node)
+                    seg.Len = 8
+                    seg.Data[0] = byte(sdoSCSUploadSegment << 5)
+                    if t == 1 { seg.Data[0] |= 1 << 4 }
+                    if last {
+                        n := byte(7 - segLen)
+                        seg.Data[0] |= 1 // c=1 last
+                        seg.Data[0] |= (n & 0x7) << 1
+                    }
+                    copy(seg.Data[1:1+segLen], readData[sent:sent+segLen])
+                    _ = serverEp.Send(seg)
+                    sent += segLen
+                    toggle ^= 1
+                }
+            }
+        }
+    }()
+
+    mux := canbus.NewMux(clientEp)
+    defer mux.Close()
+    c := NewSDOClient(clientEp, 0x33, mux, time.Second)
+
+    if err := c.Download(0x3000, 0x02, writeData); err != nil {
+        t.Fatalf("segmented download: %v", err)
+    }
+
+    data, err := c.Upload(0x3000, 0x02)
+    if err != nil { t.Fatalf("segmented upload: %v", err) }
+    if !bytes.Equal(data, readData) {
+        t.Fatalf("segmented upload mismatch: got % X want % X", data, readData)
     }
 }
 

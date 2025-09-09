@@ -26,7 +26,7 @@ Features
   - NMT build/parse utilities
   - Heartbeat (NMT error control) build/parse
   - EMCY encode/decode
-  - SDO expedited helpers and a minimal synchronous SDO client
+  - SDO client supporting expedited (≤4 bytes) and segmented transfers
   
 
 Install
@@ -101,7 +101,7 @@ func main() {
 CANopen
 -------
 
-The `canopen` subpackage provides small, composable helpers for common CANopen tasks: NMT, heartbeat, EMCY, SDO expedited transfers, and a minimal synchronous SDO client that works over any `canbus.Bus` (e.g., `LoopbackBus` or SocketCAN).
+The `canopen` subpackage provides small, composable helpers for common CANopen tasks: NMT, heartbeat, EMCY, and SDO (expedited and segmented) with a synchronous SDO client that works over any `canbus.Bus` (e.g., `LoopbackBus` or SocketCAN).
 
 Example (CANopen SDO over loopback)
 ```go
@@ -127,7 +127,7 @@ func main() {
     mux := canbus.NewMux(clientRx)
     defer mux.Close()
     c := canopen.NewSDOClient(clientTx, 0x22, mux, 0)
-    // Requires an SDO server at node 0x22 present on the bus.
+    // Download auto-selects expedited (≤4 bytes) or segmented (>4 bytes)
     if err := c.Download(0x2000, 0x01, []byte{0xAA, 0xBB}); err != nil {
         log.Fatal(err)
     }
