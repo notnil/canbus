@@ -1,3 +1,3 @@
 module github.com/notnil/canbus
 
-go 1.22
+go 1.20

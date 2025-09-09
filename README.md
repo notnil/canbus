@@ -1,40 +1,46 @@
 canbus
 =====
 
-An idiomatic, dependency-free Go library for working with Controller Area Network (CAN) buses. The top-level module provides core CAN types and I/O, and the `canopen` subpackage offers small, composable helpers for common CANopen tasks.
+[![Go Reference](https://pkg.go.dev/badge/github.com/notnil/canbus.svg)](https://pkg.go.dev/github.com/notnil/canbus)
 
-- **Module import**: `github.com/notnil/canbus`
-- **CANopen helpers**: `github.com/notnil/canbus/canopen`
+An idiomatic, dependency-free Go library for working with Controller Area Network (CAN). The top-level module provides core CAN types and I/O, plus a small, composable `canopen` subpackage for common CANopen tasks.
+
+- Module import: `github.com/notnil/canbus`
+- CANopen helpers: `github.com/notnil/canbus/canopen`
 
 What is CAN?
-- **CAN (Controller Area Network)** is a robust, real-time field bus used in automotive, robotics, and industrial control.
-- **Frames** carry up to 8 data bytes (classical CAN) with 11-bit or 29-bit identifiers.
-- **Broadcast medium**: every node can see all frames; filtering happens at the node.
+- CAN (Controller Area Network) is a robust, real-time field bus used in automotive, robotics, and industrial control.
+- Frames carry up to 8 data bytes (classical CAN) with 11-bit (standard) or 29-bit (extended) identifiers.
+- Broadcast medium: every node can see all frames; filtering happens at the node.
 
 What is CANopen?
-- **CANopen** is a higher-level protocol stack (CiA 301) standardized on top of CAN.
-- It defines services such as **NMT** (network management), **Heartbeat** (node status), **EMCY** (emergency), and **SDO/PDO** for configuration and process data.
-- This library implements a practical subset focused on building blocks you can integrate into your own nodes; it is not a full CANopen stack or object dictionary implementation.
+- CANopen is a higher-level protocol (CiA 301) standardized on top of CAN.
+- It defines services such as NMT (network management), Heartbeat (node status), EMCY (emergency), and SDO/PDO for configuration and process data.
+- This library implements practical, well-factored building blocks; it is not a full CANopen stack or object dictionary implementation.
 
 Features
-- Core CAN `Frame` type with validation and binary marshaling helpers
+- Core `Frame` type with validation, `String()` formatting, and binary marshal/unmarshal using Linux can_frame layout (16 bytes)
 - In-memory loopback bus for testing and simulation
 - Optional Linux SocketCAN driver (linux-only) implemented via raw syscalls
+- A lightweight `Mux` that fans-out frames to subscribers via filters
 - Zero external dependencies beyond the Go standard library
 - CANopen helpers:
   - COB-ID helpers and function code mapping
   - NMT build/parse utilities
-  - Heartbeat (NMT error control) build/parse
+  - Heartbeat (NMT error control) build/parse and subscription helper
   - EMCY encode/decode
-  - SDO client supporting expedited (≤4 bytes) and segmented transfers
-  
+  - SDO client supporting expedited (≤4 bytes) and segmented transfers, with typed read/write helpers
+
+Requirements
+- Go 1.22+
+- Linux for SocketCAN (build tag is automatic on linux)
 
 Install
 ```bash
 go get github.com/notnil/canbus
 ```
 
-Quick start
+Quick start (loopback)
 ```go
 package main
 
@@ -55,15 +61,26 @@ func main() {
 
     f, err := b.Receive()
     if err != nil { panic(err) }
-    fmt.Printf("ID=%03X LEN=%d DATA=%x\n", f.ID, f.Len, f.Data[:f.Len])
+    fmt.Printf("%s\n", f.String()) // e.g., 123 [2] 68 69
 }
 ```
 
-Linux SocketCAN
-- Build tag: enabled automatically on linux. The `socketcan_linux.go` driver uses only `syscall` and raw syscalls.
-- Open a socket with an interface name (e.g., `can0`) using `canbus.DialSocketCAN("can0")`.
+Frames
+- `canbus.Frame` supports standard and extended identifiers, data/RTR, and length 0..8.
+- Binary helpers use Linux can_frame layout and are useful for capture or transport.
 
-Example (Linux SocketCAN)
+```go
+f := canbus.MustFrame(0x1ABCDEFF, []byte{0xDE, 0xAD})
+fmt.Println(f.String()) // 1ABCDEFF [2] DE AD
+b, _ := f.MarshalBinary()
+var g canbus.Frame
+_ = g.UnmarshalBinary(b)
+```
+
+Linux SocketCAN
+- Build tag: enabled automatically on linux (`socketcan_linux.go`).
+- Open a bus with an interface name (e.g., `can0`) using `canbus.DialSocketCAN("can0")`.
+
 ```go
 package main
 
@@ -85,12 +102,12 @@ func main() {
         log.Fatal(err)
     }
 
-    // Receive a frame (blocks)
+    // Receive frames (blocks until a frame is available)
     go func() {
         for {
             f, err := bus.Receive()
-            if err != nil { log.Fatal(err) }
-            fmt.Printf("< %03X [%d] % x\n", f.ID, f.Len, f.Data[:f.Len])
+            if err != nil { return }
+            fmt.Println(f.String())
         }
     }()
 
@@ -98,44 +115,80 @@ func main() {
 }
 ```
 
+Mux and filters
+- `Mux` owns a `Bus` for receiving, reads frames in a single goroutine, and fans out to subscribers using `FrameFilter`s without blocking each other.
+- Use `canbus` filter helpers or your own `FrameFilter` functions.
+
+```go
+bus := canbus.NewLoopbackBus()
+rx := bus.Open()            // for Mux receive
+sender := bus.Open()        // keep original for Send
+mux := canbus.NewMux(rx)
+
+a, cancel := mux.Subscribe(canbus.ByID(0x123), 8)
+defer cancel()
+
+_ = sender.Send(canbus.MustFrame(0x123, []byte{1,2,3}))
+fmt.Println((<-a).String())
+
+mux.Close()
+```
+
+Common filters
+- `canbus.ByID`, `ByIDs`, `ByRange`, `ByMask`
+- `canbus.StandardOnly`, `ExtendedOnly`, `DataOnly`, `RTROnly`
+- `canbus.And`, `Or`, `Not` for composition
+
 CANopen
 -------
 
-The `canopen` subpackage provides small, composable helpers for common CANopen tasks: NMT, heartbeat, EMCY, and SDO (expedited and segmented) with a synchronous SDO client that works over any `canbus.Bus` (e.g., `LoopbackBus` or SocketCAN).
+The `canopen` subpackage provides focused helpers for NMT, heartbeat, EMCY, and SDO (expedited and segmented). It also includes a synchronous SDO client designed to work with any `canbus.Bus` and a `Mux`.
 
-Example (CANopen SDO over loopback)
+Example: Heartbeat subscribe via mux
 ```go
-package main
+bus := canbus.NewLoopbackBus()
+rx := bus.Open()
+mux := canbus.NewMux(rx)
 
-import (
-    "fmt"
-    "log"
+events, cancel := canopen.SubscribeHeartbeats(mux, nil, 8)
+defer cancel()
 
-    "github.com/notnil/canbus"
-    "github.com/notnil/canbus/canopen"
-)
+// Simulate a heartbeat from node 0x05
+hb := canopen.Heartbeat{Node: 0x05, State: canopen.StateOperational}
+f, _ := hb.MarshalCANFrame()
+_ = bus.Open().Send(f)
 
-func main() {
-    bus := canbus.NewLoopbackBus()
-    // Client uses separate endpoints for send and receive via mux
-    clientTx := bus.Open()
-    clientRx := bus.Open()
-    defer clientTx.Close()
-    defer clientRx.Close()
-
-    // Client side: create a mux-backed SDO client, then perform download/upload
-    mux := canbus.NewMux(clientRx)
-    defer mux.Close()
-    c := canopen.NewSDOClient(clientTx, 0x22, mux, 0)
-    // Download auto-selects expedited (≤4 bytes) or segmented (>4 bytes)
-    if err := c.Download(0x2000, 0x01, []byte{0xAA, 0xBB}); err != nil {
-        log.Fatal(err)
-    }
-    data, err := c.Upload(0x2000, 0x01)
-    if err != nil { log.Fatal(err) }
-    fmt.Printf("SDO read: % X\n", data) // prints: SDO read: DE AD BE
-}
+fmt.Printf("Heartbeat: %+v\n", <-events)
 ```
+
+Example: SDO client (expedited and segmented)
+```go
+// Assumes a CANopen server on node 0x22 present on the bus.
+bus := canbus.NewLoopbackBus() // or a real bus (e.g., SocketCAN)
+tx := bus.Open()               // client transmit endpoint
+rx := bus.Open()               // client receive endpoint (owned by mux)
+mux := canbus.NewMux(rx)
+client := canopen.NewSDOClient(tx, 0x22, mux, 0) // zero timeout waits indefinitely
+
+// Write then read using expedited transfer (≤ 4 bytes)
+_ = client.WriteU16(0x2000, 0x01, 0xBEEF)
+v, err := client.ReadU16(0x2000, 0x01)
+if err != nil { /* handle */ }
+fmt.Printf("0x2000:01 = 0x%04X\n", v)
+
+// Generic API
+_ = client.Download(0x2001, 0x01, []byte("hello world")) // segmented if > 4 bytes
+b, err := client.Upload(0x2001, 0x01)
+_ = b; _ = err
+```
+
+Notes
+- The SDO client requires a non-nil `Mux` and uses it to wait for responses without racing other receivers.
+- Timeouts: pass a non-zero duration to `NewSDOClient` for bounded waits.
+- Heartbeat and EMCY include marshal/unmarshal helpers and idiomatic types.
+
+API reference
+- `pkg.go.dev`: `https://pkg.go.dev/github.com/notnil/canbus` and `https://pkg.go.dev/github.com/notnil/canbus/canopen`
 
 License
 MIT
