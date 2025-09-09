@@ -3,6 +3,8 @@ canbus
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/notnil/canbus.svg)](https://pkg.go.dev/github.com/notnil/canbus)
 
+![Gopher CAN](gopher-can.png)
+
 An idiomatic, dependency-free Go library for working with Controller Area Network (CAN). The top-level module provides core CAN types and I/O, plus a small, composable `canopen` subpackage for common CANopen tasks.
 
 - Module import: `github.com/notnil/canbus`
@@ -189,6 +191,9 @@ Notes
 
 API reference
 - `pkg.go.dev`: `https://pkg.go.dev/github.com/notnil/canbus` and `https://pkg.go.dev/github.com/notnil/canbus/canopen`
+
+Gopher artwork
+- The Go gopher was designed by Renée French. The design is licensed under the Creative Commons Attribution 3.0 License. See the [Go gopher page](https://go.dev/doc/gopher) and [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
 
 License
 MIT
