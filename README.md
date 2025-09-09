@@ -120,119 +120,20 @@ func main() {
     // Client uses separate endpoints for send and receive via mux
     clientTx := bus.Open()
     clientRx := bus.Open()
-    server := bus.Open()
     defer clientTx.Close()
     defer clientRx.Close()
-    defer server.Close()
-
-    // Minimal CANopen SDO server: replies to download and upload for a single entry.
-    go func() {
-        for {
-            f, err := server.Receive()
-            if err != nil { return }
-            fc, node, err := canopen.ParseCOBID(f.ID)
-            if err != nil || fc != canopen.FC_SDO_RX || node != 0x22 { continue }
-            switch f.Data[0] >> 5 {
-            case 1: // initiate download request
-                var rsp canbus.Frame
-                rsp.ID = canopen.COBID(canopen.FC_SDO_TX, node)
-                rsp.Len = 8
-                rsp.Data[0] = byte(3 << 5) // download response
-                rsp.Data[1] = f.Data[1]
-                rsp.Data[2] = f.Data[2]
-                rsp.Data[3] = f.Data[3]
-                _ = server.Send(rsp)
-            case 2: // initiate upload request
-                var rsp canbus.Frame
-                rsp.ID = canopen.COBID(canopen.FC_SDO_TX, node)
-                rsp.Len = 8
-                rsp.Data[0] = byte(2<<5) | (1<<3) | (1<<2) | 0x01 // e=1, s=1, n=1 (3 bytes)
-                rsp.Data[1] = f.Data[1]
-                rsp.Data[2] = f.Data[2]
-                rsp.Data[3] = f.Data[3]
-                rsp.Data[4] = 0xDE; rsp.Data[5] = 0xAD; rsp.Data[6] = 0xBE
-                _ = server.Send(rsp)
-            }
-        }
-    }()
 
     // Client side: create a mux-backed SDO client, then perform download/upload
     mux := canbus.NewMux(clientRx)
     defer mux.Close()
     c := canopen.NewSDOClient(clientTx, 0x22, mux, 0)
+    // Requires an SDO server at node 0x22 present on the bus.
     if err := c.Download(0x2000, 0x01, []byte{0xAA, 0xBB}); err != nil {
         log.Fatal(err)
     }
     data, err := c.Upload(0x2000, 0x01)
     if err != nil { log.Fatal(err) }
     fmt.Printf("SDO read: % X\n", data) // prints: SDO read: DE AD BE
-}
-```
-
-Non-blocking SDO with Mux
--------------------------
-
-Use the `canbus.Mux` to fan-out frames to subscribers. Construct `canopen.SDOClient` with a `Mux` so SDO operations do not monopolize `Receive()`.
-
-```go
-package main
-
-import (
-    "fmt"
-    "time"
-
-    "github.com/notnil/canbus"
-    "github.com/notnil/canbus/canopen"
-)
-
-func main() {
-    lb := canbus.NewLoopbackBus()
-    // Open two endpoints: one for sending, one for receiving/muxing
-    tx := lb.Open()
-    rx := lb.Open()
-    defer tx.Close()
-    defer rx.Close()
-
-    mux := canbus.NewMux(rx)
-    defer mux.Close()
-
-    client := canopen.NewSDOClient(tx, 0x22, mux, 2*time.Second)
-
-    // Simulated server
-    srv := lb.Open()
-    defer srv.Close()
-    go func() {
-        for {
-            f, err := srv.Receive(); if err != nil { return }
-            fc, node, _ := canopen.ParseCOBID(f.ID)
-            if fc != canopen.FC_SDO_RX || node != 0x22 { continue }
-            switch f.Data[0] >> 5 {
-            case 1: // download
-                var rsp canbus.Frame
-                rsp.ID = canopen.COBID(canopen.FC_SDO_TX, node)
-                rsp.Len = 8
-                rsp.Data[0] = byte(3 << 5)
-                rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
-                _ = srv.Send(rsp)
-            case 2: // upload
-                var rsp canbus.Frame
-                rsp.ID = canopen.COBID(canopen.FC_SDO_TX, node)
-                rsp.Len = 8
-                rsp.Data[0] = byte(2<<5) | (1<<3) | (1<<2) | 0x01 // expedited 3 bytes
-                rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
-                rsp.Data[4], rsp.Data[5], rsp.Data[6] = 0xDE, 0xAD, 0xBE
-                _ = srv.Send(rsp)
-            }
-        }
-    }()
-
-    // Download without blocking other receivers
-    if err := client.Download(0x2000, 0x01, []byte{0xAA}); err != nil { panic(err) }
-
-    // Upload with timeout
-    data, err := client.Upload(0x2000, 0x01)
-    if err != nil { panic(err) }
-    fmt.Printf("SDO read: % X\n", data)
 }
 ```
 
