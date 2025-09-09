@@ -132,12 +132,10 @@ func parseSDOExpeditedUploadResponse(f canbus.Frame) (NodeID, uint16, uint8, []b
 
 // SDOClient provides a synchronous-looking SDO interface.
 //
-// If Mux is set, it waits for responses via the multiplexer so other consumers
-// of Receive are not blocked. If Mux is nil, it falls back to directly reading
-// from Bus.Receive (legacy behavior).
+// SDOClient requires a Mux and always waits for responses via the multiplexer
+// so other consumers of Receive are not blocked.
 //
-// Timeout is optional and only applies when using Mux. A zero timeout waits
-// indefinitely for the matching response.
+// Timeout is optional and applies to mux-based waits; zero means wait indefinitely.
 type SDOClient struct {
     bus     canbus.Bus
     mux     *canbus.Mux
@@ -149,6 +147,9 @@ type SDOClient struct {
 // subscribe for responses via mux to avoid blocking other receivers. timeout
 // applies to mux-based waits; zero means wait indefinitely.
 func NewSDOClient(bus canbus.Bus, node NodeID, mux *canbus.Mux, timeout time.Duration) *SDOClient {
+    if mux == nil {
+        panic("canopen: SDOClient requires a non-nil Mux")
+    }
     return &SDOClient{bus: bus, node: node, mux: mux, timeout: timeout}
 }
 
@@ -159,8 +160,7 @@ func (c *SDOClient) Download(index uint16, subindex uint8, data []byte) error {
         return err
     }
 
-    // Fast path using mux if available.
-    if c.mux != nil {
+    // Wait for response via mux
         ch, cancel := c.mux.Subscribe(func(f canbus.Frame) bool {
             fc, node, err := ParseCOBID(f.ID)
             if err != nil || fc != FC_SDO_TX || node != c.node || f.Len != 8 {
@@ -192,34 +192,6 @@ func (c *SDOClient) Download(index uint16, subindex uint8, data []byte) error {
             return canbus.ErrClosed
         }
         return nil
-    }
-
-    // Legacy fallback: block on Bus.Receive.
-    if err := c.bus.Send(req); err != nil {
-        return err
-    }
-    for {
-        f, err := c.bus.Receive()
-        if err != nil {
-            return err
-        }
-        fc, node, perr := ParseCOBID(f.ID)
-        if perr != nil {
-            continue
-        }
-        if fc != FC_SDO_TX || node != c.node || f.Len != 8 {
-            continue
-        }
-        cmd := f.Data[0]
-        if (cmd>>5)&0x7 != sdoSCSDownloadInitiate {
-            continue
-        }
-        idx := binary.LittleEndian.Uint16(f.Data[1:3])
-        sub := f.Data[3]
-        if idx == index && sub == subindex {
-            return nil
-        }
-    }
 }
 
 // Upload reads up to 4 bytes via expedited transfer.
@@ -229,67 +201,40 @@ func (c *SDOClient) Upload(index uint16, subindex uint8) ([]byte, error) {
         return nil, err
     }
 
-    if c.mux != nil {
-        ch, cancel := c.mux.Subscribe(func(f canbus.Frame) bool {
-            fc, node, err := ParseCOBID(f.ID)
-            if err != nil || fc != FC_SDO_TX || node != c.node || f.Len != 8 {
-                return false
-            }
-            // Further filtering happens after parse to check index/subindex
-            return true
-        }, 2)
-        defer cancel()
-
-        if err := c.bus.Send(req); err != nil {
-            return nil, err
+    ch, cancel := c.mux.Subscribe(func(f canbus.Frame) bool {
+        fc, node, err := ParseCOBID(f.ID)
+        if err != nil || fc != FC_SDO_TX || node != c.node || f.Len != 8 {
+            return false
         }
+        // Further filtering happens after parse to check index/subindex
+        return true
+    }, 2)
+    defer cancel()
 
-        if c.timeout > 0 {
-            timeout := time.After(c.timeout)
-            for {
-                select {
-                case f, ok := <-ch:
-                    if !ok { return nil, canbus.ErrClosed }
-                    _, idx, sub, data, perr := parseSDOExpeditedUploadResponse(f)
-                    if perr != nil || idx != index || sub != subindex { continue }
-                    return data, nil
-                case <-timeout:
-                    return nil, canbus.ErrClosed
-                }
-            }
-        }
-        for {
-            f, ok := <-ch
-            if !ok { return nil, canbus.ErrClosed }
-            _, idx, sub, data, perr := parseSDOExpeditedUploadResponse(f)
-            if perr != nil || idx != index || sub != subindex { continue }
-            return data, nil
-        }
-    }
-
-    // Legacy fallback: block on Bus.Receive.
     if err := c.bus.Send(req); err != nil {
         return nil, err
     }
+
+    if c.timeout > 0 {
+        timeout := time.After(c.timeout)
+        for {
+            select {
+            case f, ok := <-ch:
+                if !ok { return nil, canbus.ErrClosed }
+                _, idx, sub, data, perr := parseSDOExpeditedUploadResponse(f)
+                if perr != nil || idx != index || sub != subindex { continue }
+                return data, nil
+            case <-timeout:
+                return nil, canbus.ErrClosed
+            }
+        }
+    }
     for {
-        f, err := c.bus.Receive()
-        if err != nil {
-            return nil, err
-        }
-        fc, node, perr := ParseCOBID(f.ID)
-        if perr != nil {
-            continue
-        }
-        if fc != FC_SDO_TX || node != c.node || f.Len != 8 {
-            continue
-        }
+        f, ok := <-ch
+        if !ok { return nil, canbus.ErrClosed }
         _, idx, sub, data, perr := parseSDOExpeditedUploadResponse(f)
-        if perr != nil {
-            continue
-        }
-        if idx == index && sub == subindex {
-            return data, nil
-        }
+        if perr != nil || idx != index || sub != subindex { continue }
+        return data, nil
     }
 }
 

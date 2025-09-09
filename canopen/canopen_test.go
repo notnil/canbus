@@ -108,7 +108,9 @@ func TestSDOClientDownloadUpload(t *testing.T) {
         }
     }()
 
-    c := NewSDOClient(clientEp, 0x22, nil, 0)
+    mux := canbus.NewMux(clientEp)
+    defer mux.Close()
+    c := NewSDOClient(clientEp, 0x22, mux, 0)
     if err := c.Download(0x2000, 0x01, []byte{0xAA, 0xBB}); err != nil {
         t.Fatalf("download: %v", err)
     }

@@ -117,9 +117,12 @@ import (
 
 func main() {
     bus := canbus.NewLoopbackBus()
-    client := bus.Open()
+    // Client uses separate endpoints for send and receive via mux
+    clientTx := bus.Open()
+    clientRx := bus.Open()
     server := bus.Open()
-    defer client.Close()
+    defer clientTx.Close()
+    defer clientRx.Close()
     defer server.Close()
 
     // Minimal CANopen SDO server: replies to download and upload for a single entry.
@@ -153,8 +156,10 @@ func main() {
         }
     }()
 
-    // Client side: perform expedited SDO download then upload
-    c := canopen.NewSDOClient(client, 0x22, nil, 0)
+    // Client side: create a mux-backed SDO client, then perform download/upload
+    mux := canbus.NewMux(clientRx)
+    defer mux.Close()
+    c := canopen.NewSDOClient(clientTx, 0x22, mux, 0)
     if err := c.Download(0x2000, 0x01, []byte{0xAA, 0xBB}); err != nil {
         log.Fatal(err)
     }
