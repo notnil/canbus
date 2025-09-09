@@ -27,8 +27,8 @@ const (
     StatePreOperational NMTState = 0x7F
 )
 
-// BuildNMT builds an NMT command frame. node 0 means broadcast.
-func BuildNMT(cmd NMTCommand, node uint8) canbus.Frame {
+// buildNMT builds an NMT command frame. node 0 means broadcast.
+func buildNMT(cmd NMTCommand, node uint8) canbus.Frame {
     var f canbus.Frame
     f.ID = COBID(FC_NMT, 0)
     f.Len = 2
@@ -37,8 +37,8 @@ func BuildNMT(cmd NMTCommand, node uint8) canbus.Frame {
     return f
 }
 
-// ParseNMT decodes an NMT frame payload returning command and target node.
-func ParseNMT(f canbus.Frame) (NMTCommand, uint8, error) {
+// parseNMT decodes an NMT frame payload returning command and target node.
+func parseNMT(f canbus.Frame) (NMTCommand, uint8, error) {
     if f.ID != COBID(FC_NMT, 0) {
         return 0, 0, fmt.Errorf("canopen: not an NMT frame (id=0x%X)", f.ID)
     }

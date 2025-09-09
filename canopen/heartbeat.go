@@ -6,9 +6,9 @@ import (
     "github.com/notnil/canbus"
 )
 
-// BuildHeartbeat produces an NMT error control heartbeat frame for node/state.
+// buildHeartbeat produces an NMT error control heartbeat frame for node/state.
 // A heartbeat contains a single byte with the current NMTState.
-func BuildHeartbeat(node NodeID, state NMTState) (canbus.Frame, error) {
+func buildHeartbeat(node NodeID, state NMTState) (canbus.Frame, error) {
     if err := node.Validate(); err != nil {
         return canbus.Frame{}, err
     }
@@ -19,8 +19,8 @@ func BuildHeartbeat(node NodeID, state NMTState) (canbus.Frame, error) {
     return f, nil
 }
 
-// ParseHeartbeat parses a heartbeat frame and returns node id and state.
-func ParseHeartbeat(f canbus.Frame) (NodeID, NMTState, error) {
+// parseHeartbeat parses a heartbeat frame and returns node id and state.
+func parseHeartbeat(f canbus.Frame) (NodeID, NMTState, error) {
     if f.Len < 1 {
         return 0, 0, fmt.Errorf("canopen: heartbeat too short: %d", f.Len)
     }
@@ -60,7 +60,7 @@ func SubscribeHeartbeats(mux *canbus.Mux, nodeFilter *NodeID, buffer int) (<-cha
     go func() {
         defer close(out)
         for f := range frames {
-            node, state, err := ParseHeartbeat(f)
+            node, state, err := parseHeartbeat(f)
             if err != nil {
                 continue
             }
