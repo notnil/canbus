@@ -34,3 +34,39 @@ func ParseHeartbeat(f canbus.Frame) (NodeID, NMTState, error) {
     return node, NMTState(f.Data[0]), nil
 }
 
+// HeartbeatEvent is the typed payload delivered by SubscribeHeartbeats.
+type HeartbeatEvent struct {
+    Node  NodeID
+    State NMTState
+}
+
+// SubscribeHeartbeats subscribes to heartbeat (NMT error control) frames via mux
+// and delivers parsed events. If nodeFilter is non-nil, only heartbeats from the
+// specified node are delivered. The returned cancel must be called when done.
+// The channel will be closed on cancel or if the underlying mux is closed.
+func SubscribeHeartbeats(mux *canbus.Mux, nodeFilter *NodeID, buffer int) (<-chan HeartbeatEvent, func()) {
+    frames, cancel := mux.Subscribe(func(f canbus.Frame) bool {
+        fc, node, err := ParseCOBID(f.ID)
+        if err != nil || fc != FC_NMT_ERRCTRL || f.Len < 1 {
+            return false
+        }
+        if nodeFilter != nil && node != *nodeFilter {
+            return false
+        }
+        return true
+    }, buffer)
+
+    out := make(chan HeartbeatEvent, buffer)
+    go func() {
+        defer close(out)
+        for f := range frames {
+            node, state, err := ParseHeartbeat(f)
+            if err != nil {
+                continue
+            }
+            out <- HeartbeatEvent{Node: node, State: state}
+        }
+    }()
+    return out, cancel
+}
+
