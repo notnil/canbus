@@ -27,7 +27,7 @@ Features
   - Heartbeat (NMT error control) build/parse
   - EMCY encode/decode
   - SDO expedited helpers and a minimal synchronous SDO client
-  - Async SDO client with frame multiplexer that doesn't block other reads
+  
 
 Install
 ```bash
@@ -164,10 +164,10 @@ func main() {
 }
 ```
 
-Async SDO (non-blocking reads)
-------------------------------
+Non-blocking SDO with Mux
+-------------------------
 
-Use the `canbus.Mux` to fan-out frames to subscribers and the `canopen.SDOAsyncClient` to issue SDO requests without monopolizing `Receive()`.
+Use the `canbus.Mux` to fan-out frames to subscribers. Construct `canopen.SDOClient` with a `Mux` so SDO operations do not monopolize `Receive()`.
 
 ```go
 package main
