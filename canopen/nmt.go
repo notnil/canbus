@@ -48,3 +48,28 @@ func parseNMT(f canbus.Frame) (NMTCommand, uint8, error) {
     return NMTCommand(f.Data[0]), f.Data[1], nil
 }
 
+// NMT represents an NMT command (broadcast or targeted to a node) and
+// implements CAN frame marshal/unmarshal.
+// A Node value of 0 encodes broadcast per CiA 301.
+type NMT struct {
+    Command NMTCommand
+    Node    uint8
+}
+
+// MarshalCANFrame encodes the NMT command to a CAN frame.
+func (n NMT) MarshalCANFrame() (canbus.Frame, error) {
+    f := buildNMT(n.Command, n.Node)
+    return f, nil
+}
+
+// UnmarshalCANFrame decodes the NMT command from a CAN frame.
+func (n *NMT) UnmarshalCANFrame(f canbus.Frame) error {
+    cmd, node, err := parseNMT(f)
+    if err != nil {
+        return err
+    }
+    n.Command = cmd
+    n.Node = node
+    return nil
+}
+

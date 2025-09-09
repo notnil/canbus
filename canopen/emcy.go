@@ -7,16 +7,36 @@ import (
     "github.com/notnil/canbus"
 )
 
-// Emergency represents an EMCY message payload.
-//
+// Emergency represents an EMCY message including node id and payload.
 // Layout (8 bytes total):
 //   0..1: Error code (little-endian)
 //   2:    Error register
 //   3..7: Manufacturer specific data
 type Emergency struct {
+    Node           NodeID
     ErrorCode      uint16
     ErrorRegister  uint8
     Manufacturer   [5]byte
+}
+
+// MarshalCANFrame encodes the EMCY event to a CAN frame.
+func (e Emergency) MarshalCANFrame() (canbus.Frame, error) {
+    // reuse buildEMCY with same payload fields
+    payload := Emergency{ErrorCode: e.ErrorCode, ErrorRegister: e.ErrorRegister, Manufacturer: e.Manufacturer}
+    return buildEMCY(e.Node, payload)
+}
+
+// UnmarshalCANFrame decodes the EMCY event from a CAN frame.
+func (e *Emergency) UnmarshalCANFrame(f canbus.Frame) error {
+    node, payload, err := parseEMCY(f)
+    if err != nil {
+        return err
+    }
+    e.Node = node
+    e.ErrorCode = payload.ErrorCode
+    e.ErrorRegister = payload.ErrorRegister
+    e.Manufacturer = payload.Manufacturer
+    return nil
 }
 
 // buildEMCY builds an EMCY frame for the given node.

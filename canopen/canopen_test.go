@@ -20,19 +20,19 @@ func TestCOBIDHelpers(t *testing.T) {
 }
 
 func TestNMTBuildParse(t *testing.T) {
-    nf := NMTFrame{Command: NMTStart, Node: 0}
+    nf := NMT{Command: NMTStart, Node: 0}
     f, _ := nf.MarshalCANFrame()
-    var parsed NMTFrame
+    var parsed NMT
     if err := parsed.UnmarshalCANFrame(f); err != nil || parsed.Command != NMTStart || parsed.Node != 0 {
         t.Fatalf("nmt parse mismatch: cmd=%v node=%d err=%v", parsed.Command, parsed.Node, err)
     }
 }
 
 func TestHeartbeat(t *testing.T) {
-    hb := HeartbeatFrame{Node: 10, State: StateOperational}
+    hb := Heartbeat{Node: 10, State: StateOperational}
     f, err := hb.MarshalCANFrame()
     if err != nil { t.Fatal(err) }
-    var parsed HeartbeatFrame
+    var parsed Heartbeat
     if err := parsed.UnmarshalCANFrame(f); err != nil { t.Fatal(err) }
     if parsed.Node != 10 || parsed.State != StateOperational {
         t.Fatalf("heartbeat mismatch node=%d st=%v", parsed.Node, parsed.State)
@@ -40,14 +40,13 @@ func TestHeartbeat(t *testing.T) {
 }
 
 func TestEMCY(t *testing.T) {
-    e := Emergency{ErrorCode: 0x1234, ErrorRegister: 0x05}
-    em := EmergencyFrame{Node: 5, Payload: e}
+    em := Emergency{Node: 5, ErrorCode: 0x1234, ErrorRegister: 0x05}
     f, err := em.MarshalCANFrame()
     if err != nil { t.Fatal(err) }
-    var parsed EmergencyFrame
+    var parsed Emergency
     if err := parsed.UnmarshalCANFrame(f); err != nil { t.Fatal(err) }
-    if parsed.Node != 5 || parsed.Payload.ErrorCode != 0x1234 || parsed.Payload.ErrorRegister != 0x05 {
-        t.Fatalf("emcy mismatch: node=%d g=%+v", parsed.Node, parsed.Payload)
+    if parsed.Node != 5 || parsed.ErrorCode != 0x1234 || parsed.ErrorRegister != 0x05 {
+        t.Fatalf("emcy mismatch: node=%d g=%+v", parsed.Node, parsed)
     }
 }
 

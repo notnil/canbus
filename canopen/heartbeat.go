@@ -6,6 +6,29 @@ import (
     "github.com/notnil/canbus"
 )
 
+// Heartbeat represents an NMT error control heartbeat from a node and
+// implements CAN frame marshal/unmarshal.
+type Heartbeat struct {
+    Node  NodeID
+    State NMTState
+}
+
+// MarshalCANFrame encodes the heartbeat to a CAN frame.
+func (h Heartbeat) MarshalCANFrame() (canbus.Frame, error) {
+    return buildHeartbeat(h.Node, h.State)
+}
+
+// UnmarshalCANFrame decodes the heartbeat from a CAN frame.
+func (h *Heartbeat) UnmarshalCANFrame(f canbus.Frame) error {
+    node, state, err := parseHeartbeat(f)
+    if err != nil {
+        return err
+    }
+    h.Node = node
+    h.State = state
+    return nil
+}
+
 // buildHeartbeat produces an NMT error control heartbeat frame for node/state.
 // A heartbeat contains a single byte with the current NMTState.
 func buildHeartbeat(node NodeID, state NMTState) (canbus.Frame, error) {
@@ -34,17 +57,11 @@ func parseHeartbeat(f canbus.Frame) (NodeID, NMTState, error) {
     return node, NMTState(f.Data[0]), nil
 }
 
-// HeartbeatEvent is the typed payload delivered by SubscribeHeartbeats.
-type HeartbeatEvent struct {
-    Node  NodeID
-    State NMTState
-}
-
 // SubscribeHeartbeats subscribes to heartbeat (NMT error control) frames via mux
 // and delivers parsed events. If nodeFilter is non-nil, only heartbeats from the
 // specified node are delivered. The returned cancel must be called when done.
 // The channel will be closed on cancel or if the underlying mux is closed.
-func SubscribeHeartbeats(mux *canbus.Mux, nodeFilter *NodeID, buffer int) (<-chan HeartbeatEvent, func()) {
+func SubscribeHeartbeats(mux *canbus.Mux, nodeFilter *NodeID, buffer int) (<-chan Heartbeat, func()) {
     frames, cancel := mux.Subscribe(func(f canbus.Frame) bool {
         fc, node, err := ParseCOBID(f.ID)
         if err != nil || fc != FC_NMT_ERRCTRL || f.Len < 1 {
@@ -56,7 +73,7 @@ func SubscribeHeartbeats(mux *canbus.Mux, nodeFilter *NodeID, buffer int) (<-cha
         return true
     }, buffer)
 
-    out := make(chan HeartbeatEvent, buffer)
+    out := make(chan Heartbeat, buffer)
     go func() {
         defer close(out)
         for f := range frames {
@@ -64,7 +81,7 @@ func SubscribeHeartbeats(mux *canbus.Mux, nodeFilter *NodeID, buffer int) (<-cha
             if err != nil {
                 continue
             }
-            out <- HeartbeatEvent{Node: node, State: state}
+            out <- Heartbeat{Node: node, State: state}
         }
     }()
     return out, cancel
