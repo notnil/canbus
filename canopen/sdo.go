@@ -63,11 +63,7 @@ func NewSDOClient(bus canbus.Bus, node NodeID, mux *canbus.Mux, opts ...SDOClien
     return c
 }
 
-// SetClassicExpedited enables or disables the classic expedited download
-// encoding for the command byte (0x23/0x27/0x2B/0x2F). When disabled, the
-// command byte is encoded strictly per CiA 301 bitfields (yielding
-// 0x2C/0x2D/0x2E/0x2F for 4/3/2/1 bytes respectively).
-// (runtime setter removed; select mode via constructor)
+//
 
 // Download writes data to index/subindex. It uses expedited transfer for sizes
 // up to 4 bytes and segmented transfer for larger payloads.
