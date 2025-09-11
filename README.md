@@ -82,6 +82,7 @@ _ = g.UnmarshalBinary(b)
 Linux SocketCAN
 - Build tag: enabled automatically on linux (`socketcan_linux.go`).
 - Open a bus with an interface name (e.g., `can0`) using `canbus.DialSocketCAN("can0")`.
+- Optionally configure loopback, own-message echo, and buffer sizes with `DialSocketCANWithOptions`.
 
 ```go
 package main
@@ -115,6 +116,26 @@ func main() {
 
     time.Sleep(2 * time.Second)
 }
+```
+
+SocketCAN options
+```go
+opts := &canbus.SocketCANOptions{}
+
+// Enable local loopback so tools like candump see TX frames (kernel default is on).
+enable := true
+opts.Loopback = &enable
+
+// If you want your own socket to receive its transmitted frames (off by default):
+opts.ReceiveOwnMessages = &enable
+
+// Optionally enlarge buffers
+opts.SendBufferBytes = 1 << 20
+opts.ReceiveBufferBytes = 1 << 20
+
+bus, err := canbus.DialSocketCANWithOptions("can0", opts)
+if err != nil { log.Fatal(err) }
+defer bus.Close()
 ```
 
 Mux and filters
