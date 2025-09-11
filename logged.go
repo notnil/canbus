@@ -29,16 +29,30 @@ func NewLoggedBus(inner Bus, logger *slog.Logger, level slog.Level, opts LogOpti
     }
 }
 
+// NewLoggedBusWithFilter wraps the given Bus and logs selected operations but
+// only for frames that satisfy the provided filter. If filter is nil, all
+// frames are considered for logging (same as NewLoggedBus behavior).
+func NewLoggedBusWithFilter(inner Bus, logger *slog.Logger, level slog.Level, opts LogOption, filter FrameFilter) Bus {
+    return &loggedBus{
+        inner:     inner,
+        logger:    logger,
+        level:     level,
+        opts:      opts,
+        filter:    filter,
+    }
+}
+
 type loggedBus struct {
     inner     Bus
     logger    *slog.Logger
     level     slog.Level
     opts      LogOption
+    filter    FrameFilter
 }
 
 // Send logs the frame and the result when write logging is enabled.
 func (l *loggedBus) Send(frame Frame) error {
-    if l.opts&LogWrite != 0 {
+    if l.opts&LogWrite != 0 && (l.filter == nil || l.filter(frame)) {
         l.logger.Log(context.Background(), l.level, "canbus send",
             "id", frame.ID,
             "extended", frame.Extended,
@@ -67,14 +81,16 @@ func (l *loggedBus) Receive() (Frame, error) {
                 "error", err,
             )
         } else {
-            l.logger.Log(context.Background(), l.level, "canbus receive",
+            if l.filter == nil || l.filter(f) {
+                l.logger.Log(context.Background(), l.level, "canbus receive",
                 "id", f.ID,
                 "extended", f.Extended,
                 "rtr", f.RTR,
                 "len", int(f.Len),
                 "data", f.Data[:f.Len],
                 "string", f.String(),
-            )
+                )
+            }
         }
     }
     return f, err
