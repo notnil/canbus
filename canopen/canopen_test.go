@@ -458,3 +458,57 @@ func TestSDOAbortDownloadAndUpload(t *testing.T) {
     }
 }
 
+func TestSDOUploadLenientExpeditedOnly(t *testing.T) {
+    lb := canbus.NewLoopbackBus()
+    client := lb.Open()
+    server := lb.Open()
+    defer func() { _ = client.Close(); _ = server.Close() }()
+
+    // Server replies to upload initiate with e=0 but places data in bytes 4..7
+    // and does not participate in segmented transfers.
+    go func() {
+        for {
+            f, err := server.Receive()
+            if err != nil { return }
+            fc, node, err := ParseCOBID(f.ID)
+            if err != nil || fc != FC_SDO_RX || node != 0x66 { continue }
+            if (f.Data[0]>>5)&0x7 != sdoCCSUploadInitiate { continue }
+            var rsp canbus.Frame
+            rsp.ID = COBID(FC_SDO_TX, node)
+            rsp.Len = 8
+            // SCS=2, e=0, s=0 (segmented per spec), but we put data in 4..7
+            rsp.Data[0] = byte(sdoSCSUploadInitiate << 5)
+            // Echo index/sub from request
+            rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
+            rsp.Data[4], rsp.Data[5], rsp.Data[6], rsp.Data[7] = 0x11, 0x22, 0x33, 0x44
+            _ = server.Send(rsp)
+            // Ignore any follow-up segment requests to simulate a device that
+            // incorrectly ended the transfer in one frame.
+        }
+    }()
+
+    mux := canbus.NewMux(client)
+    defer mux.Close()
+
+    // Strict client should time out waiting for segmented replies
+    strict := NewSDOClient(client, 0x66, mux, WithTimeout(50*time.Millisecond))
+    if _, err := strict.Upload(0x2100, 0x01); err == nil {
+        t.Fatal("expected timeout/close in strict mode")
+    }
+
+    // Lenient client should accept bytes 4..7 and return them immediately
+    lenient := NewSDOClient(client, 0x66, mux, WithTimeout(time.Second), WithLenientUpload())
+    data, err := lenient.Upload(0x2100, 0x01)
+    if err != nil { t.Fatalf("lenient upload failed: %v", err) }
+    if got := fmt.Sprintf("% X", data); got != "11 22 33 44" {
+        t.Fatalf("lenient data mismatch: %s", got)
+    }
+    // Typed reads should work too
+    u16, err := lenient.ReadU16(0x2100, 0x01)
+    if err != nil { t.Fatalf("lenient read u16: %v", err) }
+    if u16 != 0x2211 { t.Fatalf("u16 mismatch: 0x%04X", u16) }
+    u32, err := lenient.ReadU32(0x2100, 0x01)
+    if err != nil { t.Fatalf("lenient read u32: %v", err) }
+    if u32 != 0x44332211 { t.Fatalf("u32 mismatch: 0x%08X", u32) }
+}
+
