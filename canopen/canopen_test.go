@@ -114,7 +114,7 @@ func TestSDOClientClassicExpeditedEndToEnd(t *testing.T) {
 
     mux := canbus.NewMux(client)
     defer mux.Close()
-    c := NewSDOClientWithMode(client, 0x5A, mux, time.Second, ExpeditedModeClassic)
+    c := NewSDOClient(client, 0x5A, mux, WithTimeout(time.Second), WithExpeditedMode(ExpeditedModeClassic))
 
     // 4 bytes should produce 0x23; 1 byte should produce 0x2F. We cannot read
     // what was sent through mux directly here; instead, ensure the transfer
@@ -169,7 +169,7 @@ func TestSDOClientDownloadUpload(t *testing.T) {
 
     mux := canbus.NewMux(clientEp)
     defer mux.Close()
-    c := NewSDOClient(clientEp, 0x22, mux, 0)
+    c := NewSDOClient(clientEp, 0x22, mux)
     if err := c.Download(0x2000, 0x01, []byte{0xAA, 0xBB}); err != nil {
         t.Fatalf("download: %v", err)
     }
@@ -281,7 +281,7 @@ func TestSDOSegmentedDownloadUpload(t *testing.T) {
 
     mux := canbus.NewMux(clientEp)
     defer mux.Close()
-    c := NewSDOClient(clientEp, 0x33, mux, time.Second)
+    c := NewSDOClient(clientEp, 0x33, mux, WithTimeout(time.Second))
 
     if err := c.Download(0x3000, 0x02, writeData); err != nil {
         t.Fatalf("segmented download: %v", err)
@@ -333,7 +333,7 @@ func TestSDOAsyncOverLoopback(t *testing.T) {
         }
     }()
 
-    client := NewSDOClient(tx, 0x11, mux, time.Second)
+    client := NewSDOClient(tx, 0x11, mux, WithTimeout(time.Second))
 
     // Issue download and ensure it completes
     if err := client.Download(0x2000, 0x01, []byte{0x01}); err != nil { t.Fatal(err) }
@@ -441,7 +441,7 @@ func TestSDOAbortDownloadAndUpload(t *testing.T) {
 
     mux := canbus.NewMux(client)
     defer mux.Close()
-    c := NewSDOClient(client, 0x55, mux, time.Second)
+    c := NewSDOClient(client, 0x55, mux, WithTimeout(time.Second))
 
     // Download should return SDOAbort
     if err := c.Download(0x2000, 0x01, []byte{0xAA}); err == nil {

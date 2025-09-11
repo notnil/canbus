@@ -39,20 +39,28 @@ const (
 // NewSDOClient constructs an SDOClient. If mux is non-nil, operations will
 // subscribe for responses via mux to avoid blocking other receivers. timeout
 // applies to mux-based waits; zero means wait indefinitely.
-func NewSDOClient(bus canbus.Bus, node NodeID, mux *canbus.Mux, timeout time.Duration) *SDOClient {
-    if mux == nil {
-        panic("canopen: SDOClient requires a non-nil Mux")
-    }
-    return &SDOClient{bus: bus, node: node, mux: mux, timeout: timeout, expeditedMode: ExpeditedModeSpec}
+// SDOClientOption configures an SDOClient during construction.
+type SDOClientOption func(*SDOClient)
+
+// WithTimeout sets the mux wait timeout; zero means wait indefinitely.
+func WithTimeout(d time.Duration) SDOClientOption {
+    return func(c *SDOClient) { c.timeout = d }
 }
 
-// NewSDOClientWithMode constructs an SDOClient with a specific expedited
-// encoding mode.
-func NewSDOClientWithMode(bus canbus.Bus, node NodeID, mux *canbus.Mux, timeout time.Duration, mode ExpeditedMode) *SDOClient {
+// WithExpeditedMode selects the encoding used for expedited downloads.
+func WithExpeditedMode(m ExpeditedMode) SDOClientOption {
+    return func(c *SDOClient) { c.expeditedMode = m }
+}
+
+// NewSDOClient constructs an SDOClient with optional configuration.
+// Defaults: timeout=0 (wait indefinitely), expeditedMode=ExpeditedModeSpec.
+func NewSDOClient(bus canbus.Bus, node NodeID, mux *canbus.Mux, opts ...SDOClientOption) *SDOClient {
     if mux == nil {
         panic("canopen: SDOClient requires a non-nil Mux")
     }
-    return &SDOClient{bus: bus, node: node, mux: mux, timeout: timeout, expeditedMode: mode}
+    c := &SDOClient{bus: bus, node: node, mux: mux, timeout: 0, expeditedMode: ExpeditedModeSpec}
+    for _, opt := range opts { opt(c) }
+    return c
 }
 
 // SetClassicExpedited enables or disables the classic expedited download
