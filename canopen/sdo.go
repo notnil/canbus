@@ -22,6 +22,11 @@ type SDOClient struct {
     // expeditedMode selects how the command byte is encoded for expedited
     // downloads.
     expeditedMode ExpeditedMode
+    // lenientUploadExpeditedOnly, when true, treats the first upload response
+    // as expedited if bytes 4..7 contain data, even when the expedited bit (e)
+    // is not set. This skips segmented upload and returns up to 4 bytes.
+    // Intended for devices that put data in 4..7 but leave e=0.
+    lenientUploadExpeditedOnly bool
 }
 
 // ExpeditedMode selects the encoding for expedited SDO download command byte.
@@ -50,6 +55,14 @@ func WithTimeout(d time.Duration) SDOClientOption {
 // WithExpeditedMode selects the encoding used for expedited downloads.
 func WithExpeditedMode(m ExpeditedMode) SDOClientOption {
     return func(c *SDOClient) { c.expeditedMode = m }
+}
+
+// WithLenientUpload enables a compatibility mode for SDO uploads where the
+// client accepts data placed in bytes 4..7 of the first upload response even
+// when the expedited bit is not set, and does not enter the segmented loop.
+// Only up to 4 bytes are returned in this mode.
+func WithLenientUpload() SDOClientOption {
+    return func(c *SDOClient) { c.lenientUploadExpeditedOnly = true }
 }
 
 // NewSDOClient constructs an SDOClient with optional configuration.
@@ -193,9 +206,20 @@ func (c *SDOClient) Upload(index uint16, subindex uint8) ([]byte, error) {
     if _, ab, ok := parseSDOAbort(first); ok {
         if ab.Index == index && ab.Subindex == subindex { return nil, *ab }
     }
-    // Try expedited parse
+    // Try expedited parse (strict)
     if _, idx, sub, data, perr := parseSDOExpeditedUploadResponse(first); perr == nil && idx == index && sub == subindex {
         return data, nil
+    }
+
+    // Lenient expedited-only mode: accept data in 4..7 even if e=0 and skip segments.
+    if c.lenientUploadExpeditedOnly {
+        if (first.Data[0]>>5)&0x7 == sdoSCSUploadInitiate &&
+            binary.LittleEndian.Uint16(first.Data[1:3]) == index && first.Data[3] == subindex {
+            // Return all 4 bytes; typed helpers will trim as needed in lenient mode.
+            out := make([]byte, 4)
+            copy(out, first.Data[4:8])
+            return out, nil
+        }
     }
 
     // Segmented upload initiate response expected
@@ -286,6 +310,10 @@ func (c *SDOClient) ReadU8(index uint16, subindex uint8) (uint8, error) {
 func (c *SDOClient) ReadU16(index uint16, subindex uint8) (uint16, error) {
     b, err := c.Upload(index, subindex)
     if err != nil { return 0, err }
+    if c.lenientUploadExpeditedOnly {
+        if len(b) < 2 { return 0, fmt.Errorf("canopen: sdo read u16: got %d bytes", len(b)) }
+        return binary.LittleEndian.Uint16(b[:2]), nil
+    }
     if len(b) != 2 { return 0, fmt.Errorf("canopen: sdo read u16: got %d bytes", len(b)) }
     return binary.LittleEndian.Uint16(b), nil
 }
@@ -293,6 +321,10 @@ func (c *SDOClient) ReadU16(index uint16, subindex uint8) (uint16, error) {
 func (c *SDOClient) ReadU32(index uint16, subindex uint8) (uint32, error) {
     b, err := c.Upload(index, subindex)
     if err != nil { return 0, err }
+    if c.lenientUploadExpeditedOnly {
+        if len(b) < 4 { return 0, fmt.Errorf("canopen: sdo read u32: got %d bytes", len(b)) }
+        return binary.LittleEndian.Uint32(b[:4]), nil
+    }
     if len(b) != 4 { return 0, fmt.Errorf("canopen: sdo read u32: got %d bytes", len(b)) }
     return binary.LittleEndian.Uint32(b), nil
 }
