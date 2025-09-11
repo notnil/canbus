@@ -84,6 +84,22 @@ Linux SocketCAN
 - Open a bus with an interface name (e.g., `can0`) using `canbus.DialSocketCAN("can0")`.
 - Optionally configure loopback, own-message echo, and buffer sizes with `DialSocketCANWithOptions`.
 
+Interface control (Linux)
+- The package includes small helpers to toggle a CAN interface up/down without external dependencies:
+  - `canbus.IsInterfaceUp("can0")`
+  - `canbus.SetInterfaceUp("can0")`
+  - `canbus.SetInterfaceDown("can0")`
+- These call Linux ioctls (`SIOCGIFFLAGS`/`SIOCSIFFLAGS`) under the hood and require network admin privileges.
+
+Running unprivileged
+- Bringing interfaces up/down requires `CAP_NET_ADMIN` (or root). You can grant only this capability to your compiled binary:
+```bash
+sudo setcap cap_net_admin+ep /path/to/your-app
+# verify
+getcap /path/to/your-app
+```
+- Alternatively, use `sudo` to run the program. Note that opening a CAN raw socket for I/O does not require elevated privileges, only interface state changes do.
+
 ```go
 package main
 
