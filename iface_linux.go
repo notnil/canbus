@@ -5,6 +5,7 @@ package canbus
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"syscall"
 	"unsafe"
 )
@@ -110,5 +111,58 @@ func RequireRootOrCapNetAdmin(err error) error {
 		return fmt.Errorf("operation requires CAP_NET_ADMIN (or root): %w", err)
 	}
 	return err
+}
+
+// LinuxCANInterfaceOptions controls common CAN interface parameters through the system `ip` tool.
+//
+// Notes:
+// - Changing bitrate/restart-ms typically requires the interface to be DOWN.
+//   You can call SetInterfaceDown(name) first and bring it back up after configuring.
+// - These operations require CAP_NET_ADMIN.
+type LinuxCANInterfaceOptions struct {
+	// Bitrate sets the arbitration bit-rate in bits per second (e.g., 125000, 500000, 1000000).
+	// If nil, bitrate is left unchanged.
+	Bitrate *uint32
+
+	// RestartMs sets automatic bus-off recovery delay in milliseconds.
+	// If nil, restart-ms is left unchanged. Set to 0 to disable auto-restart.
+	RestartMs *uint32
+
+	// TxQueueLen sets the transmit queue length (number of packets).
+	// If nil, txqueuelen is left unchanged.
+	TxQueueLen *int
+}
+
+// ConfigureLinuxCANInterface applies the provided options to a Linux CAN network interface
+// by invoking the system `ip` command (iproute2). Only the non-nil fields are applied.
+// Requires CAP_NET_ADMIN (or root). Errors are wrapped with guidance when permissions are insufficient.
+func ConfigureLinuxCANInterface(name string, opts LinuxCANInterfaceOptions) error {
+	if len(name) == 0 || len(name) >= ifNameSize {
+		return fmt.Errorf("canbus: invalid interface name %q", name)
+	}
+
+	// 1) Apply txqueuelen if requested (can be changed while interface is up on most drivers)
+	if opts.TxQueueLen != nil {
+		cmd := exec.Command("ip", "link", "set", "dev", name, "txqueuelen", fmt.Sprintf("%d", *opts.TxQueueLen))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return RequireRootOrCapNetAdmin(fmt.Errorf("ip link set txqueuelen failed: %w; output: %s", err, string(out)))
+		}
+	}
+
+	// 2) Apply CAN-specific settings (bitrate, restart-ms) together if any provided
+	if opts.Bitrate != nil || opts.RestartMs != nil {
+		args := []string{"link", "set", "dev", name, "type", "can"}
+		if opts.Bitrate != nil {
+			args = append(args, "bitrate", fmt.Sprintf("%d", *opts.Bitrate))
+		}
+		if opts.RestartMs != nil {
+			args = append(args, "restart-ms", fmt.Sprintf("%d", *opts.RestartMs))
+		}
+		cmd := exec.Command("ip", args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return RequireRootOrCapNetAdmin(fmt.Errorf("ip link set type can failed: %w; output: %s", err, string(out)))
+		}
+	}
+	return nil
 }
 

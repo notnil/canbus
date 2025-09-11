@@ -91,6 +91,27 @@ Interface control (Linux)
   - `canbus.SetInterfaceDown("can0")`
 - These call Linux ioctls (`SIOCGIFFLAGS`/`SIOCSIFFLAGS`) under the hood and require network admin privileges.
 
+Configure CAN interface parameters (Linux)
+- You can set bitrate, restart-ms (auto bus-off recovery), and txqueuelen using a small helper that shells out to `ip` (iproute2):
+```go
+// Bring interface down before changing bitrate/restart-ms on many drivers
+_ = canbus.SetInterfaceDown("can0")
+
+br := uint32(500000) // 500 kbit/s
+rst := uint32(100)   // 100 ms auto-restart after bus-off
+txq := 1024          // transmit queue length
+
+err := canbus.ConfigureLinuxCANInterface("can0", canbus.LinuxCANInterfaceOptions{
+    Bitrate:    &br,
+    RestartMs:  &rst,
+    TxQueueLen: &txq,
+})
+if err != nil { /* handle */ }
+
+_ = canbus.SetInterfaceUp("can0")
+```
+- Requires `CAP_NET_ADMIN` (or root). The helper invokes `ip` and returns combined stderr/stdout on failure.
+
 Running unprivileged
 - Bringing interfaces up/down requires `CAP_NET_ADMIN` (or root). You can grant only this capability to your compiled binary:
 ```bash
