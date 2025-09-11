@@ -19,6 +19,11 @@ type SDOClient struct {
     mux     *canbus.Mux
     node    NodeID
     timeout time.Duration
+    // classicExpedited toggles using legacy command byte values for expedited
+    // downloads: 0x23/0x27/0x2B/0x2F for 4/3/2/1 bytes respectively. Some
+    // devices (e.g., certain ZLTech drives) require these encodings instead of
+    // strict CiA 301 bitfield composition that yields 0x2C/0x2D/0x2E/0x2F.
+    classicExpedited bool
 }
 
 // NewSDOClient constructs an SDOClient. If mux is non-nil, operations will
@@ -31,11 +36,25 @@ func NewSDOClient(bus canbus.Bus, node NodeID, mux *canbus.Mux, timeout time.Dur
     return &SDOClient{bus: bus, node: node, mux: mux, timeout: timeout}
 }
 
+// SetClassicExpedited enables or disables the classic expedited download
+// encoding for the command byte (0x23/0x27/0x2B/0x2F). When disabled, the
+// command byte is encoded strictly per CiA 301 bitfields (yielding
+// 0x2C/0x2D/0x2E/0x2F for 4/3/2/1 bytes respectively).
+func (c *SDOClient) SetClassicExpedited(enabled bool) {
+    c.classicExpedited = enabled
+}
+
 // Download writes data to index/subindex. It uses expedited transfer for sizes
 // up to 4 bytes and segmented transfer for larger payloads.
 func (c *SDOClient) Download(index uint16, subindex uint8, data []byte) error {
     if len(data) <= 4 {
-        req, err := sdoExpeditedDownload(c.node, index, subindex, data)
+        var req canbus.Frame
+        var err error
+        if c.classicExpedited {
+            req, err = sdoExpeditedDownloadClassic(c.node, index, subindex, data)
+        } else {
+            req, err = sdoExpeditedDownload(c.node, index, subindex, data)
+        }
         if err != nil {
             return err
         }
@@ -304,6 +323,33 @@ func sdoExpeditedDownload(target NodeID, index uint16, subindex uint8, data []by
     f.Data[3] = subindex
     // Data fill little-endian into bytes 4..7 for convenience. Application must
     // interpret endian according to object.
+    for i := 0; i < len(data); i++ {
+        f.Data[4+i] = data[i]
+    }
+    return f, nil
+}
+
+// sdoExpeditedDownloadClassic builds expedited download using the widely used
+// legacy command byte constants: for size n in bytes the command is
+// 0x23 + ((4-n) << 2). This yields: n=4 -> 0x23, n=3 -> 0x27, n=2 -> 0x2B, n=1 -> 0x2F.
+// Reads are unaffected; this only changes the request command byte encoding.
+func sdoExpeditedDownloadClassic(target NodeID, index uint16, subindex uint8, data []byte) (canbus.Frame, error) {
+    if err := target.Validate(); err != nil {
+        return canbus.Frame{}, err
+    }
+    if len(data) == 0 || len(data) > 4 {
+        return canbus.Frame{}, fmt.Errorf("canopen: classic expedited requires 1..4 bytes, got %d", len(data))
+    }
+    var f canbus.Frame
+    f.ID = COBID(FC_SDO_RX, target)
+    f.Len = 8
+    // Calculate classic command byte
+    // 0x23 + ((4-n)<<2)
+    n := byte(len(data))
+    cmd := byte(0x23 + ((4-int(n)) << 2))
+    f.Data[0] = cmd
+    binary.LittleEndian.PutUint16(f.Data[1:3], index)
+    f.Data[3] = subindex
     for i := 0; i < len(data); i++ {
         f.Data[4+i] = data[i]
     }

@@ -67,6 +67,63 @@ func TestSDOExpeditedHelpers(t *testing.T) {
     }
 }
 
+func TestSDOExpeditedClassicCommandBytes(t *testing.T) {
+    // Verify classic command byte mapping for 1..4 byte payloads
+    cases := []struct{
+        n int
+        want byte
+    }{
+        {1, 0x2F},
+        {2, 0x2B},
+        {3, 0x27},
+        {4, 0x23},
+    }
+    for _, tc := range cases {
+        data := make([]byte, tc.n)
+        for i := range data { data[i] = byte(i+1) }
+        f, err := sdoExpeditedDownloadClassic(0x10, 0x2000, 0x01, data)
+        if err != nil { t.Fatalf("n=%d err=%v", tc.n, err) }
+        if f.Data[0] != tc.want {
+            t.Fatalf("n=%d cmd=0x%02X want=0x%02X", tc.n, f.Data[0], tc.want)
+        }
+    }
+}
+
+func TestSDOClientClassicExpeditedEndToEnd(t *testing.T) {
+    lb := canbus.NewLoopbackBus()
+    client := lb.Open()
+    server := lb.Open()
+    defer func(){ _ = client.Close(); _ = server.Close() }()
+
+    // Server echoes a download-initiate OK and ignores command byte content
+    go func(){
+        for {
+            f, err := server.Receive()
+            if err != nil { return }
+            fc, node, err := ParseCOBID(f.ID)
+            if err != nil || fc != FC_SDO_RX || node != 0x5A { continue }
+            if (f.Data[0]>>5)&0x7 != sdoCCSDownloadInitiate { continue }
+            var rsp canbus.Frame
+            rsp.ID = COBID(FC_SDO_TX, node)
+            rsp.Len = 8
+            rsp.Data[0] = byte(sdoSCSDownloadInitiate << 5)
+            rsp.Data[1], rsp.Data[2], rsp.Data[3] = f.Data[1], f.Data[2], f.Data[3]
+            _ = server.Send(rsp)
+        }
+    }()
+
+    mux := canbus.NewMux(client)
+    defer mux.Close()
+    c := NewSDOClient(client, 0x5A, mux, time.Second)
+    c.SetClassicExpedited(true)
+
+    // 4 bytes should produce 0x23; 1 byte should produce 0x2F. We cannot read
+    // what was sent through mux directly here; instead, ensure the transfer
+    // completes without abort using both sizes.
+    if err := c.Download(0x2000, 0x00, []byte{1,2,3,4}); err != nil { t.Fatal(err) }
+    if err := c.Download(0x2001, 0x00, []byte{9}); err != nil { t.Fatal(err) }
+}
+
 func TestSDOClientDownloadUpload(t *testing.T) {
     bus := canbus.NewLoopbackBus()
     clientEp := bus.Open()
