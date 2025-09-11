@@ -113,6 +113,21 @@ func RequireRootOrCapNetAdmin(err error) error {
 	return err
 }
 
+// Common CAN arbitration bit-rates (bits per second) for Linux interfaces.
+// Use with LinuxCANInterfaceOptions.Bitrate.
+const (
+	CANBitrate10K  uint32 = 10000
+	CANBitrate20K  uint32 = 20000
+	CANBitrate50K  uint32 = 50000
+	CANBitrate83k3 uint32 = 83333
+	CANBitrate100K uint32 = 100000
+	CANBitrate125K uint32 = 125000
+	CANBitrate250K uint32 = 250000
+	CANBitrate500K uint32 = 500000
+	CANBitrate800K uint32 = 800000
+	CANBitrate1M   uint32 = 1000000
+)
+
 // LinuxCANInterfaceOptions controls common CAN interface parameters through the system `ip` tool.
 //
 // Notes:
