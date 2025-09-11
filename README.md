@@ -170,7 +170,7 @@ bus := canbus.NewLoopbackBus() // or a real bus (e.g., SocketCAN)
 tx := bus.Open()               // client transmit endpoint
 rx := bus.Open()               // client receive endpoint (owned by mux)
 mux := canbus.NewMux(rx)
-client := canopen.NewSDOClient(tx, 0x22, mux, 0) // zero timeout waits indefinitely
+client := canopen.NewSDOClient(tx, 0x22, mux) // default: wait indefinitely, spec mode
 
 // Write then read using expedited transfer (≤ 4 bytes)
 _ = client.WriteU16(0x2000, 0x01, 0xBEEF)
@@ -186,7 +186,8 @@ _ = b; _ = err
 
 Notes
 - The SDO client requires a non-nil `Mux` and uses it to wait for responses without racing other receivers.
-- Timeouts: pass a non-zero duration to `NewSDOClient` for bounded waits.
+- Timeouts: pass `WithTimeout(d)` to `NewSDOClient` for bounded waits.
+- Classic expedited writes: use `WithExpeditedMode(canopen.ExpeditedModeClassic)` if your device expects 0x23/0x27/0x2B/0x2F command bytes.
 - Heartbeat and EMCY include marshal/unmarshal helpers and idiomatic types.
 
 API reference

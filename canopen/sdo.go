@@ -19,23 +19,64 @@ type SDOClient struct {
     mux     *canbus.Mux
     node    NodeID
     timeout time.Duration
+    // expeditedMode selects how the command byte is encoded for expedited
+    // downloads.
+    expeditedMode ExpeditedMode
 }
+
+// ExpeditedMode selects the encoding for expedited SDO download command byte.
+type ExpeditedMode int
+
+const (
+    // ExpeditedModeSpec encodes the command byte strictly per CiA 301 bitfields
+    // (yielding 0x2C/0x2D/0x2E/0x2F for 4/3/2/1 bytes respectively).
+    ExpeditedModeSpec ExpeditedMode = iota
+    // ExpeditedModeClassic encodes using the widely used legacy values:
+    // 0x23/0x27/0x2B/0x2F for 4/3/2/1 bytes respectively.
+    ExpeditedModeClassic
+)
 
 // NewSDOClient constructs an SDOClient. If mux is non-nil, operations will
 // subscribe for responses via mux to avoid blocking other receivers. timeout
 // applies to mux-based waits; zero means wait indefinitely.
-func NewSDOClient(bus canbus.Bus, node NodeID, mux *canbus.Mux, timeout time.Duration) *SDOClient {
+// SDOClientOption configures an SDOClient during construction.
+type SDOClientOption func(*SDOClient)
+
+// WithTimeout sets the mux wait timeout; zero means wait indefinitely.
+func WithTimeout(d time.Duration) SDOClientOption {
+    return func(c *SDOClient) { c.timeout = d }
+}
+
+// WithExpeditedMode selects the encoding used for expedited downloads.
+func WithExpeditedMode(m ExpeditedMode) SDOClientOption {
+    return func(c *SDOClient) { c.expeditedMode = m }
+}
+
+// NewSDOClient constructs an SDOClient with optional configuration.
+// Defaults: timeout=0 (wait indefinitely), expeditedMode=ExpeditedModeSpec.
+func NewSDOClient(bus canbus.Bus, node NodeID, mux *canbus.Mux, opts ...SDOClientOption) *SDOClient {
     if mux == nil {
         panic("canopen: SDOClient requires a non-nil Mux")
     }
-    return &SDOClient{bus: bus, node: node, mux: mux, timeout: timeout}
+    c := &SDOClient{bus: bus, node: node, mux: mux, timeout: 0, expeditedMode: ExpeditedModeSpec}
+    for _, opt := range opts { opt(c) }
+    return c
 }
+
+//
 
 // Download writes data to index/subindex. It uses expedited transfer for sizes
 // up to 4 bytes and segmented transfer for larger payloads.
 func (c *SDOClient) Download(index uint16, subindex uint8, data []byte) error {
     if len(data) <= 4 {
-        req, err := sdoExpeditedDownload(c.node, index, subindex, data)
+        var req canbus.Frame
+        var err error
+        switch c.expeditedMode {
+        case ExpeditedModeClassic:
+            req, err = sdoExpeditedDownloadClassic(c.node, index, subindex, data)
+        default:
+            req, err = sdoExpeditedDownload(c.node, index, subindex, data)
+        }
         if err != nil {
             return err
         }
@@ -304,6 +345,33 @@ func sdoExpeditedDownload(target NodeID, index uint16, subindex uint8, data []by
     f.Data[3] = subindex
     // Data fill little-endian into bytes 4..7 for convenience. Application must
     // interpret endian according to object.
+    for i := 0; i < len(data); i++ {
+        f.Data[4+i] = data[i]
+    }
+    return f, nil
+}
+
+// sdoExpeditedDownloadClassic builds expedited download using the widely used
+// legacy command byte constants: for size n in bytes the command is
+// 0x23 + ((4-n) << 2). This yields: n=4 -> 0x23, n=3 -> 0x27, n=2 -> 0x2B, n=1 -> 0x2F.
+// Reads are unaffected; this only changes the request command byte encoding.
+func sdoExpeditedDownloadClassic(target NodeID, index uint16, subindex uint8, data []byte) (canbus.Frame, error) {
+    if err := target.Validate(); err != nil {
+        return canbus.Frame{}, err
+    }
+    if len(data) == 0 || len(data) > 4 {
+        return canbus.Frame{}, fmt.Errorf("canopen: classic expedited requires 1..4 bytes, got %d", len(data))
+    }
+    var f canbus.Frame
+    f.ID = COBID(FC_SDO_RX, target)
+    f.Len = 8
+    // Calculate classic command byte
+    // 0x23 + ((4-n)<<2)
+    n := byte(len(data))
+    cmd := byte(0x23 + ((4-int(n)) << 2))
+    f.Data[0] = cmd
+    binary.LittleEndian.PutUint16(f.Data[1:3], index)
+    f.Data[3] = subindex
     for i := 0; i < len(data); i++ {
         f.Data[4+i] = data[i]
     }
