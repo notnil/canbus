@@ -19,12 +19,22 @@ type SDOClient struct {
     mux     *canbus.Mux
     node    NodeID
     timeout time.Duration
-    // classicExpedited toggles using legacy command byte values for expedited
-    // downloads: 0x23/0x27/0x2B/0x2F for 4/3/2/1 bytes respectively. Some
-    // devices (e.g., certain ZLTech drives) require these encodings instead of
-    // strict CiA 301 bitfield composition that yields 0x2C/0x2D/0x2E/0x2F.
-    classicExpedited bool
+    // expeditedMode selects how the command byte is encoded for expedited
+    // downloads.
+    expeditedMode ExpeditedMode
 }
+
+// ExpeditedMode selects the encoding for expedited SDO download command byte.
+type ExpeditedMode int
+
+const (
+    // ExpeditedModeSpec encodes the command byte strictly per CiA 301 bitfields
+    // (yielding 0x2C/0x2D/0x2E/0x2F for 4/3/2/1 bytes respectively).
+    ExpeditedModeSpec ExpeditedMode = iota
+    // ExpeditedModeClassic encodes using the widely used legacy values:
+    // 0x23/0x27/0x2B/0x2F for 4/3/2/1 bytes respectively.
+    ExpeditedModeClassic
+)
 
 // NewSDOClient constructs an SDOClient. If mux is non-nil, operations will
 // subscribe for responses via mux to avoid blocking other receivers. timeout
@@ -33,16 +43,23 @@ func NewSDOClient(bus canbus.Bus, node NodeID, mux *canbus.Mux, timeout time.Dur
     if mux == nil {
         panic("canopen: SDOClient requires a non-nil Mux")
     }
-    return &SDOClient{bus: bus, node: node, mux: mux, timeout: timeout}
+    return &SDOClient{bus: bus, node: node, mux: mux, timeout: timeout, expeditedMode: ExpeditedModeSpec}
+}
+
+// NewSDOClientWithMode constructs an SDOClient with a specific expedited
+// encoding mode.
+func NewSDOClientWithMode(bus canbus.Bus, node NodeID, mux *canbus.Mux, timeout time.Duration, mode ExpeditedMode) *SDOClient {
+    if mux == nil {
+        panic("canopen: SDOClient requires a non-nil Mux")
+    }
+    return &SDOClient{bus: bus, node: node, mux: mux, timeout: timeout, expeditedMode: mode}
 }
 
 // SetClassicExpedited enables or disables the classic expedited download
 // encoding for the command byte (0x23/0x27/0x2B/0x2F). When disabled, the
 // command byte is encoded strictly per CiA 301 bitfields (yielding
 // 0x2C/0x2D/0x2E/0x2F for 4/3/2/1 bytes respectively).
-func (c *SDOClient) SetClassicExpedited(enabled bool) {
-    c.classicExpedited = enabled
-}
+// (runtime setter removed; select mode via constructor)
 
 // Download writes data to index/subindex. It uses expedited transfer for sizes
 // up to 4 bytes and segmented transfer for larger payloads.
@@ -50,9 +67,10 @@ func (c *SDOClient) Download(index uint16, subindex uint8, data []byte) error {
     if len(data) <= 4 {
         var req canbus.Frame
         var err error
-        if c.classicExpedited {
+        switch c.expeditedMode {
+        case ExpeditedModeClassic:
             req, err = sdoExpeditedDownloadClassic(c.node, index, subindex, data)
-        } else {
+        default:
             req, err = sdoExpeditedDownload(c.node, index, subindex, data)
         }
         if err != nil {

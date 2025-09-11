@@ -114,8 +114,7 @@ func TestSDOClientClassicExpeditedEndToEnd(t *testing.T) {
 
     mux := canbus.NewMux(client)
     defer mux.Close()
-    c := NewSDOClient(client, 0x5A, mux, time.Second)
-    c.SetClassicExpedited(true)
+    c := NewSDOClientWithMode(client, 0x5A, mux, time.Second, ExpeditedModeClassic)
 
     // 4 bytes should produce 0x23; 1 byte should produce 0x2F. We cannot read
     // what was sent through mux directly here; instead, ensure the transfer
