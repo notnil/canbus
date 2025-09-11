@@ -40,8 +40,8 @@ func TestLoggedBus_WriteAndReadLogging(t *testing.T) {
     logger := slog.New(sink)
 
     // Wrap both endpoints to verify read and write logging independently.
-    sender := NewLoggedBus(lb.Open(), logger, slog.LevelInfo, false, true)
-    receiver := NewLoggedBus(lb.Open(), logger, slog.LevelInfo, true, false)
+    sender := NewLoggedBus(lb.Open(), logger, slog.LevelInfo, LogWrite)
+    receiver := NewLoggedBus(lb.Open(), logger, slog.LevelInfo, LogRead)
     defer sender.Close()
     defer receiver.Close()
 
@@ -69,7 +69,7 @@ func TestLoggedBus_ErrorLogging(t *testing.T) {
 
     sink := &recordSink{}
     logger := slog.New(sink)
-    wrapped := NewLoggedBus(rx, logger, slog.LevelInfo, true, false)
+    wrapped := NewLoggedBus(rx, logger, slog.LevelInfo, LogRead)
     _, _ = wrapped.Receive()
 
     if !hasSlogMsg(sink.records, slog.LevelError, "canbus receive error") {

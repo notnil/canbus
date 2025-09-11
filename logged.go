@@ -8,16 +8,24 @@ import (
 // LoggedBus is a Bus decorator that logs Send/Receive operations using a
 // slog.Logger.
 
-// NewLoggedBus wraps the given Bus and logs reads, writes, or both at the given
-// level. When logReads/logWrites are false, the corresponding operation is not
-// logged.
-func NewLoggedBus(inner Bus, logger *slog.Logger, level slog.Level, logReads, logWrites bool) Bus {
+// LogOption is a bitmask for selecting which operations to log.
+type LogOption uint8
+
+const (
+    LogNone  LogOption = 0
+    LogRead  LogOption = 1 << iota
+    LogWrite
+    LogAll = LogRead | LogWrite
+)
+
+// NewLoggedBus wraps the given Bus and logs selected operations at the given
+// level.
+func NewLoggedBus(inner Bus, logger *slog.Logger, level slog.Level, opts LogOption) Bus {
     return &loggedBus{
         inner:     inner,
         logger:    logger,
         level:     level,
-        logReads:  logReads,
-        logWrites: logWrites,
+        opts:      opts,
     }
 }
 
@@ -25,13 +33,12 @@ type loggedBus struct {
     inner     Bus
     logger    *slog.Logger
     level     slog.Level
-    logReads  bool
-    logWrites bool
+    opts      LogOption
 }
 
 // Send logs the frame and the result when write logging is enabled.
 func (l *loggedBus) Send(frame Frame) error {
-    if l.logWrites {
+    if l.opts&LogWrite != 0 {
         l.logger.Log(context.Background(), l.level, "canbus send",
             "id", frame.ID,
             "extended", frame.Extended,
@@ -42,7 +49,7 @@ func (l *loggedBus) Send(frame Frame) error {
         )
     }
     err := l.inner.Send(frame)
-    if l.logWrites && err != nil {
+    if l.opts&LogWrite != 0 && err != nil {
         l.logger.Log(context.Background(), slog.LevelError, "canbus send error",
             "id", frame.ID,
             "error", err,
@@ -54,7 +61,7 @@ func (l *loggedBus) Send(frame Frame) error {
 // Receive logs the received frame or error when read logging is enabled.
 func (l *loggedBus) Receive() (Frame, error) {
     f, err := l.inner.Receive()
-    if l.logReads {
+    if l.opts&LogRead != 0 {
         if err != nil {
             l.logger.Log(context.Background(), slog.LevelError, "canbus receive error",
                 "error", err,
