@@ -1,36 +1,31 @@
 package canbus
 
 import (
+    "context"
+    "log/slog"
     "testing"
 )
 
-type kvPair struct{
-    key string
-    val any
+type recordSink struct{
+    records []slog.Record
 }
 
-type testLogEntry struct{
-    level LogLevel
-    msg   string
-    kvs   []kvPair
+func (s *recordSink) Enabled(context.Context, slog.Level) bool { return true }
+func (s *recordSink) Handle(_ context.Context, r slog.Record) error {
+    // Make a deep copy of attributes because slog reuses the record during processing
+    attrs := make([]slog.Attr, 0, r.NumAttrs())
+    r.Attrs(func(a slog.Attr) bool { attrs = append(attrs, a); return true })
+    nr := slog.Record{Time: r.Time, Level: r.Level, PC: r.PC, Message: r.Message}
+    for _, a := range attrs { nr.AddAttrs(a) }
+    s.records = append(s.records, nr)
+    return nil
 }
+func (s *recordSink) WithAttrs(attrs []slog.Attr) slog.Handler { return s }
+func (s *recordSink) WithGroup(name string) slog.Handler { return s }
 
-type testLogger struct{
-    entries []testLogEntry
-}
-
-func (t *testLogger) Log(level LogLevel, msg string, kv ...any) {
-    e := testLogEntry{level: level, msg: msg}
-    for i := 0; i+1 < len(kv); i+=2 {
-        k, _ := kv[i].(string)
-        e.kvs = append(e.kvs, kvPair{key: k, val: kv[i+1]})
-    }
-    t.entries = append(t.entries, e)
-}
-
-func hasMsg(entries []testLogEntry, level LogLevel, msg string) bool {
-    for _, e := range entries {
-        if e.level == level && e.msg == msg {
+func hasSlogMsg(records []slog.Record, level slog.Level, msg string) bool {
+    for _, r := range records {
+        if r.Level == level && r.Message == msg {
             return true
         }
     }
@@ -41,10 +36,12 @@ func TestLoggedBus_WriteAndReadLogging(t *testing.T) {
     lb := NewLoopbackBus()
     defer lb.Close()
 
-    logger := &testLogger{}
+    sink := &recordSink{}
+    logger := slog.New(sink)
+
     // Wrap both endpoints to verify read and write logging independently.
-    sender := NewLoggedBus(lb.Open(), logger, LevelInfo, false, true)
-    receiver := NewLoggedBus(lb.Open(), logger, LevelInfo, true, false)
+    sender := NewLoggedBus(lb.Open(), logger, slog.LevelInfo, false, true)
+    receiver := NewLoggedBus(lb.Open(), logger, slog.LevelInfo, true, false)
     defer sender.Close()
     defer receiver.Close()
 
@@ -56,10 +53,10 @@ func TestLoggedBus_WriteAndReadLogging(t *testing.T) {
         t.Fatalf("receive: %v", err)
     }
 
-    if !hasMsg(logger.entries, LevelInfo, "canbus send") {
+    if !hasSlogMsg(sink.records, slog.LevelInfo, "canbus send") {
         t.Fatalf("expected write log entry")
     }
-    if !hasMsg(logger.entries, LevelInfo, "canbus receive") {
+    if !hasSlogMsg(sink.records, slog.LevelInfo, "canbus receive") {
         t.Fatalf("expected read log entry")
     }
 }
@@ -70,11 +67,12 @@ func TestLoggedBus_ErrorLogging(t *testing.T) {
     rx := lb.Open()
     _ = rx.Close()
 
-    logger := &testLogger{}
-    wrapped := NewLoggedBus(rx, logger, LevelInfo, true, false)
+    sink := &recordSink{}
+    logger := slog.New(sink)
+    wrapped := NewLoggedBus(rx, logger, slog.LevelInfo, true, false)
     _, _ = wrapped.Receive()
 
-    if !hasMsg(logger.entries, LevelError, "canbus receive error") {
+    if !hasSlogMsg(sink.records, slog.LevelError, "canbus receive error") {
         t.Fatalf("expected receive error log entry")
     }
 }
