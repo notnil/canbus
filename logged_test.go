@@ -77,3 +77,45 @@ func TestLoggedBus_ErrorLogging(t *testing.T) {
     }
 }
 
+func TestLoggedBus_FilterSkipsSYNCAndHeartbeat(t *testing.T) {
+    lb := NewLoopbackBus()
+    defer lb.Close()
+
+    sink := &recordSink{}
+    logger := slog.New(sink)
+
+    // Filter that excludes SYNC (0x080) and any heartbeat frames (0x700-0x77F)
+    exclude := Not(Or(
+        ByID(0x080),              // SYNC
+        ByMask(0x700, 0x780),     // Heartbeats
+    ))
+
+    sender := NewLoggedBusWithFilter(lb.Open(), logger, slog.LevelInfo, LogWrite, exclude)
+    receiver := NewLoggedBusWithFilter(lb.Open(), logger, slog.LevelInfo, LogRead, exclude)
+    defer sender.Close()
+    defer receiver.Close()
+
+    // Build one SYNC, one heartbeat (node 1), and one arbitrary data frame
+    syncFrame := MustFrame(0x080, nil)
+    hbFrame := MustFrame(0x700+0x01, []byte{0x05})
+    dataFrame := MustFrame(0x123, []byte{0xDE, 0xAD})
+
+    if err := sender.Send(syncFrame); err != nil { t.Fatalf("send sync: %v", err) }
+    if err := sender.Send(hbFrame); err != nil { t.Fatalf("send hb: %v", err) }
+    if err := sender.Send(dataFrame); err != nil { t.Fatalf("send data: %v", err) }
+
+    // Drain on receiver to trigger read logs
+    for i := 0; i < 3; i++ {
+        if _, err := receiver.Receive(); err != nil { t.Fatalf("receive: %v", err) }
+    }
+
+    // Expect only one send and one receive log total at info level
+    var sendCount, recvCount int
+    for _, r := range sink.records {
+        if r.Level == slog.LevelInfo && r.Message == "canbus send" { sendCount++ }
+        if r.Level == slog.LevelInfo && r.Message == "canbus receive" { recvCount++ }
+    }
+    if sendCount != 1 { t.Fatalf("expected 1 send log, got %d", sendCount) }
+    if recvCount != 1 { t.Fatalf("expected 1 receive log, got %d", recvCount) }
+}
+
